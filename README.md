@@ -6,7 +6,7 @@
 
 - 自动定位 AstrBot 的 `data/config` 目录
 - 列出当前已有的插件配置文件
-- 查看任意插件完整配置
+- 查看任意插件完整配置，并将解析后的 JSON 渲染为图片输出
 - 按点号路径读取配置项，如 `providers.0.model`
 - 直接写入或删除配置项
 - 修改前自动备份
@@ -42,7 +42,8 @@
 
 - `config_dir_override`：覆盖自动探测到的配置目录
 - `backup_keep_count`：每个插件最多保留多少份备份
-- `preview_limit`：查看完整配置时的返回字符上限
+- `preview_limit`：图片渲染失败时，文本兜底输出的字符上限
+- `image_char_limit`：图片渲染前允许的最大字符数
 
 ## 说明
 

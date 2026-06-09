@@ -79,12 +79,16 @@ class AstrBotPluginConfigManager(Star):
             config_path = self._get_plugin_config_path(plugin_name)
             config_data = await self._load_json(config_path)
             rendered = self._render_json(config_data)
-            preview_limit = self._get_int_config("preview_limit", 3500)
-            if len(rendered) > preview_limit:
-                rendered = (
-                    f"{rendered[:preview_limit]}\n... 已截断，共 {len(rendered)} 个字符。"
-                )
-            yield event.plain_result(f"{config_path.name}\n{rendered}")
+            image_text = "\n".join(
+                [
+                    f"Plugin: {plugin_name}",
+                    f"File: {config_path.name}",
+                    "",
+                    rendered,
+                ]
+            )
+            image_url = await self._render_config_image(image_text)
+            yield event.image_result(image_url)
         except Exception as exc:
             yield event.plain_result(self._handle_unexpected_error(exc))
 
@@ -368,6 +372,25 @@ class AstrBotPluginConfigManager(Star):
             return f"操作失败：{exc}"
         logger.error(f"config manager command failed unexpectedly: {exc}")
         return "操作失败：内部错误，请查看日志。"
+
+    async def _render_config_image(self, text: str) -> str:
+        image_char_limit = self._get_int_config("image_char_limit", 12000)
+        final_text = text
+        if len(final_text) > image_char_limit:
+            final_text = (
+                f"{final_text[:image_char_limit]}\n\n... 已截断，共 {len(text)} 个字符。"
+            )
+        try:
+            return await self.text_to_image(final_text)
+        except Exception as exc:
+            logger.warning(f"text_to_image failed, fallback to preview text: {exc}")
+            preview_limit = self._get_int_config("preview_limit", 3500)
+            fallback_text = final_text[:preview_limit]
+            if len(final_text) > preview_limit:
+                fallback_text = (
+                    f"{fallback_text}\n\n... 已截断，共 {len(final_text)} 个字符。"
+                )
+            return await self.text_to_image(fallback_text)
 
     async def _load_json(
         self,

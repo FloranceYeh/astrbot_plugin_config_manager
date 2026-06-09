@@ -16,5 +16,11 @@
     "type": "int",
     "hint": "超过上限时自动截断返回内容",
     "default": 3500
+  },
+  "image_char_limit": {
+    "description": "配置图片渲染字符上限",
+    "type": "int",
+    "hint": "超过上限时会在生成图片前截断内容",
+    "default": 12000
   }
 }

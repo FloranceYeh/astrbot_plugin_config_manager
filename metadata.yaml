@@ -1,7 +1,7 @@
 name: astrbot_plugin_config_manager
 display_name: Plugin Config Manager
 author: FloranceYeh
-version: 1.0.0
+version: 1.1.0
 desc: Manage AstrBot plugin config files with list, view, edit, backup and restore.
 repo: https://github.com/FloranceYeh/astrbot_plugin_config_manager
 astrbot_version: ">=4.16,<5"
