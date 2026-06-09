@@ -11,7 +11,7 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools
 
-from render import ConfigEntry, RenderHelper
+from .core.render import ConfigEntry, RenderHelper
 
 
 class ConfigPathError(ValueError):
