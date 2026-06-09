@@ -403,7 +403,7 @@ class AstrBotPluginConfigManager(Star):
             raise FileNotFoundError(f"配置文件不存在：{path.name}")
 
         def _reader() -> dict[str, Any]:
-            with path.open("r", encoding="utf-8") as file:
+            with path.open("r", encoding="utf-8-sig") as file:
                 content = json.load(file)
             if not isinstance(content, dict):
                 raise ConfigPathError("配置根节点必须是 JSON 对象。")
