@@ -227,8 +227,8 @@ class RenderHelper:
         draw.text((margin, 34), f"插件配置：{plugin_name}", fill="#1F2937", font=title_font)
         draw.text((margin, 74), "查看图中的序号可直接用于 获取 / 设置 / 删除", fill="#64748B", font=meta_font)
 
-        meta_box_top = 110
-        meta_box_bottom = 144
+        meta_box_top = 115
+        meta_box_bottom = 150
         draw.rounded_rectangle(
             (margin, meta_box_top, canvas_width - margin, meta_box_bottom),
             radius=14,
