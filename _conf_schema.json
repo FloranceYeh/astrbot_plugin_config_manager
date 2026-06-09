@@ -1,26 +1,44 @@
 {
   "config_dir_override": {
-    "description": "配置目录覆盖路径",
+    "description": "覆盖配置目录",
     "type": "string",
-    "hint": "留空时自动使用 AstrBot data/config 目录",
+    "hint": "留空时自动使用 AstrBot 的 data/config 目录",
     "default": ""
   },
   "backup_keep_count": {
     "description": "每个插件保留的备份数量",
     "type": "int",
-    "hint": "超过数量时自动删除最旧备份",
+    "hint": "超过数量后自动删除更早的备份",
     "default": 10
   },
   "preview_limit": {
-    "description": "查看配置时的字符上限",
+    "description": "纯文本预览字符上限",
     "type": "int",
-    "hint": "超过上限时自动截断返回内容",
+    "hint": "用于图片渲染失败时的文本兜底输出",
     "default": 3500
   },
-  "image_char_limit": {
-    "description": "配置图片渲染字符上限",
+  "image_width": {
+    "description": "渲染图片宽度",
     "type": "int",
-    "hint": "超过上限时会在生成图片前截断内容",
-    "default": 12000
+    "hint": "生成的配置表图片总宽度",
+    "default": 1600
+  },
+  "image_max_rows": {
+    "description": "最大渲染行数",
+    "type": "int",
+    "hint": "超过该数量的配置项会被截断",
+    "default": 300
+  },
+  "render_image_keep_count": {
+    "description": "保留的渲染图片数量",
+    "type": "int",
+    "hint": "超过数量后自动删除更早生成的图片",
+    "default": 20
+  },
+  "font_path": {
+    "description": "自定义字体文件路径",
+    "type": "string",
+    "hint": "当默认字体无法正确显示你的语言时填写此项",
+    "default": ""
   }
 }

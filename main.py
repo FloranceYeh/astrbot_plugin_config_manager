@@ -3,9 +3,13 @@ import json
 import os
 import re
 import shutil
+import textwrap
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from PIL import Image, ImageDraw, ImageFont
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -14,6 +18,13 @@ from astrbot.api.star import Context, Star, StarTools
 
 class ConfigPathError(ValueError):
     pass
+
+
+@dataclass
+class ConfigEntry:
+    key_name: str
+    dot_path: str
+    value_text: str
 
 
 class AstrBotPluginConfigManager(Star):
@@ -26,27 +37,25 @@ class AstrBotPluginConfigManager(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     async def config_help(self, event: AstrMessageEvent):
         """显示插件配置管理命令帮助。"""
-        try:
-            yield event.plain_result(
-                "\n".join(
-                    [
-                        "插件配置管理命令：",
-                        "1. 插件配置列表",
-                        "2. 插件配置查看 <插件名>",
-                        "3. 插件配置获取 <插件名> <键路径>",
-                        "4. 插件配置设置 <插件名> <键路径> <值>",
-                        "5. 插件配置删除 <插件名> <键路径>",
-                        "6. 插件配置备份 <插件名>",
-                        "7. 插件配置备份列表 <插件名>",
-                        "8. 插件配置恢复 <插件名> <备份文件名>",
-                        "",
-                        "键路径支持点号访问，例如：server.port、providers.0.model",
-                        "设置值会优先按 JSON 解析；解析失败时按普通字符串写入。",
-                    ]
-                )
+        yield event.plain_result(
+            "\n".join(
+                [
+                    "插件配置管理命令：",
+                    "1. 插件配置列表",
+                    "2. 插件配置查看 <插件名>",
+                    "3. 插件配置获取 <插件名> <键路径>",
+                    "4. 插件配置设置 <插件名> <键路径> <值>",
+                    "5. 插件配置删除 <插件名> <键路径>",
+                    "6. 插件配置备份 <插件名>",
+                    "7. 插件配置备份列表 <插件名>",
+                    "8. 插件配置恢复 <插件名> <备份文件名>",
+                    "",
+                    "查看命令会输出表格图片，列出键名、点号路径和值。",
+                    "键路径支持点号访问，例如：server.port、providers.0.model",
+                    "设置值会优先按 JSON 解析；解析失败时按普通字符串写入。",
+                ]
             )
-        except Exception as exc:
-            yield event.plain_result(self._handle_unexpected_error(exc))
+        )
 
     @filter.command("插件配置列表", alias={"plugin-config-list", "pconf-list"})
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -74,21 +83,25 @@ class AstrBotPluginConfigManager(Star):
     @filter.command("插件配置查看", alias={"plugin-config-view", "pconf-view"})
     @filter.permission_type(filter.PermissionType.ADMIN)
     async def view_config(self, event: AstrMessageEvent, plugin_name: str):
-        """查看指定插件的完整配置。"""
+        """查看指定插件配置并渲染为图片。"""
         try:
             config_path = self._get_plugin_config_path(plugin_name)
             config_data = await self._load_json(config_path)
-            rendered = self._render_json(config_data)
-            image_text = "\n".join(
-                [
-                    f"Plugin: {plugin_name}",
-                    f"File: {config_path.name}",
-                    "",
-                    rendered,
+            entries = self._flatten_config_entries(config_data)
+            if not entries:
+                entries = [
+                    ConfigEntry(
+                        key_name="<root>",
+                        dot_path="<root>",
+                        value_text=self._render_json(config_data),
+                    )
                 ]
+            render_path = await self._render_config_table_image(
+                plugin_name=plugin_name,
+                config_path=config_path,
+                entries=entries,
             )
-            image_url = await self._render_config_image(image_text)
-            yield event.image_result(image_url)
+            yield event.image_result(str(render_path))
         except Exception as exc:
             yield event.plain_result(self._handle_unexpected_error(exc))
 
@@ -224,6 +237,9 @@ class AstrBotPluginConfigManager(Star):
     def _get_backup_dir(self, plugin_name: str) -> Path:
         return self.data_dir / "backups" / self._sanitize_plugin_name(plugin_name)
 
+    def _get_render_dir(self) -> Path:
+        return self.data_dir / "rendered_configs"
+
     def _get_backup_path(self, plugin_name: str, backup_name: str) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", backup_name):
             raise ConfigPathError("备份文件名非法。")
@@ -351,6 +367,46 @@ class AstrBotPluginConfigManager(Star):
     def _render_json(self, data: Any) -> str:
         return json.dumps(data, ensure_ascii=False, indent=2)
 
+    def _flatten_config_entries(self, data: Any) -> list[ConfigEntry]:
+        entries: list[ConfigEntry] = []
+
+        def visit(node: Any, path_parts: list[str]):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    visit(value, [*path_parts, str(key)])
+                return
+
+            if isinstance(node, list):
+                for index, value in enumerate(node):
+                    visit(value, [*path_parts, str(index)])
+                return
+
+            if not path_parts:
+                entries.append(
+                    ConfigEntry(
+                        key_name="<root>",
+                        dot_path="<root>",
+                        value_text=self._stringify_value(node),
+                    )
+                )
+                return
+
+            entries.append(
+                ConfigEntry(
+                    key_name=path_parts[-1],
+                    dot_path=".".join(path_parts),
+                    value_text=self._stringify_value(node),
+                )
+            )
+
+        visit(data, [])
+        return entries
+
+    def _stringify_value(self, value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=False)
+
     def _get_raw_config_value(self, key: str, default: Any) -> Any:
         if self.config is None:
             return default
@@ -373,24 +429,250 @@ class AstrBotPluginConfigManager(Star):
         logger.error(f"config manager command failed unexpectedly: {exc}")
         return "操作失败：内部错误，请查看日志。"
 
-    async def _render_config_image(self, text: str) -> str:
-        image_char_limit = self._get_int_config("image_char_limit", 12000)
-        final_text = text
-        if len(final_text) > image_char_limit:
-            final_text = (
-                f"{final_text[:image_char_limit]}\n\n... 已截断，共 {len(text)} 个字符。"
+    async def _render_config_table_image(
+        self,
+        plugin_name: str,
+        config_path: Path,
+        entries: list[ConfigEntry],
+    ) -> Path:
+        return await asyncio.to_thread(
+            self._render_config_table_image_sync,
+            plugin_name,
+            config_path,
+            entries,
+        )
+
+    def _render_config_table_image_sync(
+        self,
+        plugin_name: str,
+        config_path: Path,
+        entries: list[ConfigEntry],
+    ) -> Path:
+        render_dir = self._get_render_dir()
+        render_dir.mkdir(parents=True, exist_ok=True)
+        self._trim_rendered_images(render_dir)
+
+        max_rows = max(1, self._get_int_config("image_max_rows", 300))
+        was_truncated = len(entries) > max_rows
+        visible_entries = entries[:max_rows]
+
+        canvas_width = max(960, self._get_int_config("image_width", 1600))
+        margin = 40
+        header_height = 88
+        row_padding_y = 14
+        cell_padding_x = 12
+        row_gap = 1
+        col_key = 220
+        col_path = 420
+        col_value = canvas_width - margin * 2 - col_key - col_path
+        if col_value < 280:
+            raise ConfigPathError("图片宽度过小，无法渲染配置表。")
+
+        title_font = self._load_font(30)
+        meta_font = self._load_font(18)
+        header_font = self._load_font(20)
+        body_font = self._load_font(18)
+        draw = ImageDraw.Draw(Image.new("RGB", (canvas_width, 10), "#FFFFFF"))
+
+        rows: list[dict[str, Any]] = []
+        for entry in visible_entries:
+            key_lines = self._wrap_text(draw, entry.key_name, body_font, col_key - cell_padding_x * 2)
+            path_lines = self._wrap_text(draw, entry.dot_path, body_font, col_path - cell_padding_x * 2)
+            value_lines = self._wrap_text(draw, entry.value_text, body_font, col_value - cell_padding_x * 2)
+            line_count = max(len(key_lines), len(path_lines), len(value_lines))
+            line_height = self._line_height(draw, body_font)
+            row_height = row_padding_y * 2 + line_count * line_height
+            rows.append(
+                {
+                    "key_lines": key_lines,
+                    "path_lines": path_lines,
+                    "value_lines": value_lines,
+                    "height": row_height,
+                }
             )
-        try:
-            return await self.text_to_image(final_text)
-        except Exception as exc:
-            logger.warning(f"text_to_image failed, fallback to preview text: {exc}")
-            preview_limit = self._get_int_config("preview_limit", 3500)
-            fallback_text = final_text[:preview_limit]
-            if len(final_text) > preview_limit:
-                fallback_text = (
-                    f"{fallback_text}\n\n... 已截断，共 {len(final_text)} 个字符。"
-                )
-            return await self.text_to_image(fallback_text)
+
+        table_header_height = 48
+        footer_height = 48 if was_truncated else 24
+        image_height = header_height + table_header_height + footer_height
+        image_height += sum(row["height"] + row_gap for row in rows)
+
+        image = Image.new("RGB", (canvas_width, image_height), "#F6F4EE")
+        draw = ImageDraw.Draw(image)
+
+        draw.rounded_rectangle(
+            (24, 20, canvas_width - 24, image_height - 20),
+            radius=24,
+            fill="#FFFDF7",
+            outline="#D8D1C0",
+            width=2,
+        )
+        draw.text((margin, 36), f"Plugin Config: {plugin_name}", fill="#1F2937", font=title_font)
+        draw.text((margin, 72), f"File: {config_path.name}", fill="#5B6470", font=meta_font)
+
+        table_top = header_height
+        table_left = margin
+        table_right = canvas_width - margin
+        table_width = table_right - table_left
+        draw.rounded_rectangle(
+            (table_left, table_top, table_right, table_top + table_header_height),
+            radius=16,
+            fill="#E8EEF8",
+            outline="#CAD5E8",
+            width=1,
+        )
+
+        key_x = table_left
+        path_x = key_x + col_key
+        value_x = path_x + col_path
+        header_y = table_top + 12
+        draw.text((key_x + cell_padding_x, header_y), "Key", fill="#102A43", font=header_font)
+        draw.text((path_x + cell_padding_x, header_y), "Dot Path", fill="#102A43", font=header_font)
+        draw.text((value_x + cell_padding_x, header_y), "Value", fill="#102A43", font=header_font)
+
+        current_y = table_top + table_header_height + row_gap
+        line_height = self._line_height(draw, body_font)
+        for index, row in enumerate(rows):
+            fill = "#FFFFFF" if index % 2 == 0 else "#F7F9FC"
+            draw.rectangle(
+                (table_left, current_y, table_right, current_y + row["height"]),
+                fill=fill,
+                outline="#E2E8F0",
+                width=1,
+            )
+            draw.line((path_x, current_y, path_x, current_y + row["height"]), fill="#E2E8F0", width=1)
+            draw.line((value_x, current_y, value_x, current_y + row["height"]), fill="#E2E8F0", width=1)
+
+            self._draw_multiline_cell(
+                draw,
+                row["key_lines"],
+                key_x + cell_padding_x,
+                current_y + row_padding_y,
+                body_font,
+                line_height,
+                "#1F2937",
+            )
+            self._draw_multiline_cell(
+                draw,
+                row["path_lines"],
+                path_x + cell_padding_x,
+                current_y + row_padding_y,
+                body_font,
+                line_height,
+                "#3D4852",
+            )
+            self._draw_multiline_cell(
+                draw,
+                row["value_lines"],
+                value_x + cell_padding_x,
+                current_y + row_padding_y,
+                body_font,
+                line_height,
+                "#111827",
+            )
+            current_y += row["height"] + row_gap
+
+        footer_text = f"Rows: {len(visible_entries)} / {len(entries)}"
+        if was_truncated:
+            footer_text += "  (truncated)"
+        draw.text((margin, image_height - 44), footer_text, fill="#6B7280", font=meta_font)
+
+        filename = f"{self._sanitize_plugin_name(plugin_name)}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
+        output_path = render_dir / filename
+        image.save(output_path, format="PNG")
+        return output_path
+
+    def _wrap_text(
+        self,
+        draw: ImageDraw.ImageDraw,
+        text: str,
+        font: ImageFont.ImageFont,
+        max_width: int,
+    ) -> list[str]:
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        source_lines = normalized.split("\n") or [""]
+        wrapped_lines: list[str] = []
+        max_chars = max(8, max_width // max(1, self._measure_text_width(draw, "测", font)))
+
+        for line in source_lines:
+            if not line:
+                wrapped_lines.append("")
+                continue
+
+            current = ""
+            for piece in textwrap.wrap(line, width=max_chars, break_long_words=True, break_on_hyphens=False) or [""]:
+                if self._measure_text_width(draw, piece, font) <= max_width:
+                    wrapped_lines.append(piece)
+                    continue
+
+                current = ""
+                for char in piece:
+                    trial = current + char
+                    if current and self._measure_text_width(draw, trial, font) > max_width:
+                        wrapped_lines.append(current)
+                        current = char
+                    else:
+                        current = trial
+                if current:
+                    wrapped_lines.append(current)
+        return wrapped_lines or [""]
+
+    def _draw_multiline_cell(
+        self,
+        draw: ImageDraw.ImageDraw,
+        lines: list[str],
+        x: int,
+        y: int,
+        font: ImageFont.ImageFont,
+        line_height: int,
+        fill: str,
+    ):
+        for index, line in enumerate(lines):
+            draw.text((x, y + index * line_height), line, fill=fill, font=font)
+
+    def _line_height(self, draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
+        bbox = draw.textbbox((0, 0), "Ag测试", font=font)
+        return (bbox[3] - bbox[1]) + 6
+
+    def _measure_text_width(
+        self,
+        draw: ImageDraw.ImageDraw,
+        text: str,
+        font: ImageFont.ImageFont,
+    ) -> int:
+        bbox = draw.textbbox((0, 0), text or " ", font=font)
+        return bbox[2] - bbox[0]
+
+    def _load_font(self, size: int) -> ImageFont.ImageFont:
+        configured_font = str(self._get_raw_config_value("font_path", "")).strip()
+        font_candidates = []
+        if configured_font:
+            font_candidates.append(configured_font)
+        font_candidates.extend(
+            [
+                "C:/Windows/Fonts/msyh.ttc",
+                "C:/Windows/Fonts/msyhbd.ttc",
+                "C:/Windows/Fonts/simhei.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                "/System/Library/Fonts/PingFang.ttc",
+                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            ]
+        )
+
+        for candidate in font_candidates:
+            path = Path(candidate)
+            if path.exists():
+                try:
+                    return ImageFont.truetype(str(path), size=size)
+                except OSError:
+                    continue
+        return ImageFont.load_default()
+
+    def _trim_rendered_images(self, render_dir: Path):
+        keep_count = max(1, self._get_int_config("render_image_keep_count", 20))
+        rendered_files = sorted(render_dir.glob("*.png"), reverse=True)
+        for obsolete in rendered_files[keep_count:]:
+            obsolete.unlink(missing_ok=True)
 
     async def _load_json(
         self,
