@@ -25,6 +25,7 @@ class ConfigEntry:
     key_name: str
     dot_path: str
     value_text: str
+    depth: int
 
 
 class AstrBotPluginConfigManager(Star):
@@ -94,6 +95,7 @@ class AstrBotPluginConfigManager(Star):
                         key_name="<root>",
                         dot_path="<root>",
                         value_text=self._render_json(config_data),
+                        depth=0,
                     )
                 ]
             render_path = await self._render_config_table_image(
@@ -387,6 +389,7 @@ class AstrBotPluginConfigManager(Star):
                         key_name="<root>",
                         dot_path="<root>",
                         value_text=self._stringify_value(node),
+                        depth=0,
                     )
                 )
                 return
@@ -396,6 +399,7 @@ class AstrBotPluginConfigManager(Star):
                     key_name=path_parts[-1],
                     dot_path=".".join(path_parts),
                     value_text=self._stringify_value(node),
+                    depth=max(0, len(path_parts) - 1),
                 )
             )
 
@@ -455,14 +459,15 @@ class AstrBotPluginConfigManager(Star):
         max_rows = max(1, self._get_int_config("image_max_rows", 300))
         was_truncated = len(entries) > max_rows
         visible_entries = entries[:max_rows]
+        max_depth = max((entry.depth for entry in visible_entries), default=0)
 
         canvas_width = max(960, self._get_int_config("image_width", 1600))
         margin = 40
-        header_height = 88
+        header_height = 156
         row_padding_y = 14
         cell_padding_x = 12
         row_gap = 1
-        col_key = 220
+        col_key = 260
         col_path = 420
         col_value = canvas_width - margin * 2 - col_key - col_path
         if col_value < 280:
@@ -472,11 +477,20 @@ class AstrBotPluginConfigManager(Star):
         meta_font = self._load_font(18)
         header_font = self._load_font(20)
         body_font = self._load_font(18)
+        badge_font = self._load_font(16)
         draw = ImageDraw.Draw(Image.new("RGB", (canvas_width, 10), "#FFFFFF"))
 
         rows: list[dict[str, Any]] = []
         for entry in visible_entries:
-            key_lines = self._wrap_text(draw, entry.key_name, body_font, col_key - cell_padding_x * 2)
+            badge_width = 50
+            indent_width = min(entry.depth, 6) * 22
+            key_text_width = col_key - cell_padding_x * 2 - badge_width - indent_width
+            key_lines = self._wrap_text(
+                draw,
+                entry.key_name,
+                body_font,
+                max(80, key_text_width),
+            )
             path_lines = self._wrap_text(draw, entry.dot_path, body_font, col_path - cell_padding_x * 2)
             value_lines = self._wrap_text(draw, entry.value_text, body_font, col_value - cell_padding_x * 2)
             line_count = max(len(key_lines), len(path_lines), len(value_lines))
@@ -488,6 +502,9 @@ class AstrBotPluginConfigManager(Star):
                     "path_lines": path_lines,
                     "value_lines": value_lines,
                     "height": row_height,
+                    "depth": entry.depth,
+                    "badge_width": badge_width,
+                    "indent_width": indent_width,
                 }
             )
 
@@ -506,18 +523,39 @@ class AstrBotPluginConfigManager(Star):
             outline="#D8D1C0",
             width=2,
         )
-        draw.text((margin, 36), f"Plugin Config: {plugin_name}", fill="#1F2937", font=title_font)
-        draw.text((margin, 72), f"File: {config_path.name}", fill="#5B6470", font=meta_font)
+        draw.text((margin, 34), f"Plugin Config: {plugin_name}", fill="#1F2937", font=title_font)
+        draw.text((margin, 68), "Flattened view for config keys", fill="#64748B", font=meta_font)
+
+        meta_box_top = 94
+        meta_box_bottom = 134
+        draw.rounded_rectangle(
+            (margin, meta_box_top, canvas_width - margin, meta_box_bottom),
+            radius=14,
+            fill="#F3F6FB",
+            outline="#D6DEEB",
+            width=1,
+        )
+        draw.text(
+            (margin + 18, meta_box_top + 10),
+            f"文件: {config_path.name}",
+            fill="#334155",
+            font=meta_font,
+        )
+        draw.text(
+            (canvas_width - margin - 320, meta_box_top + 10),
+            f"条目数: {len(visible_entries)}/{len(entries)}  层级深度: {max_depth + 1}",
+            fill="#475569",
+            font=meta_font,
+        )
 
         table_top = header_height
         table_left = margin
         table_right = canvas_width - margin
-        table_width = table_right - table_left
         draw.rounded_rectangle(
             (table_left, table_top, table_right, table_top + table_header_height),
             radius=16,
-            fill="#E8EEF8",
-            outline="#CAD5E8",
+            fill="#DDE8F7",
+            outline="#C1D0E6",
             width=1,
         )
 
@@ -542,10 +580,38 @@ class AstrBotPluginConfigManager(Star):
             draw.line((path_x, current_y, path_x, current_y + row["height"]), fill="#E2E8F0", width=1)
             draw.line((value_x, current_y, value_x, current_y + row["height"]), fill="#E2E8F0", width=1)
 
+            accent_color = self._depth_color(row["depth"])
+            draw.rounded_rectangle(
+                (
+                    key_x + 8,
+                    current_y + 8,
+                    key_x + 14,
+                    current_y + row["height"] - 8,
+                ),
+                radius=3,
+                fill=accent_color,
+            )
+
+            badge_left = key_x + cell_padding_x + 14
+            badge_top = current_y + row_padding_y
+            badge_right = badge_left + 34
+            badge_bottom = badge_top + 22
+            draw.rounded_rectangle(
+                (badge_left, badge_top, badge_right, badge_bottom),
+                radius=8,
+                fill=accent_color,
+            )
+            draw.text(
+                (badge_left + 8, badge_top + 2),
+                f"L{row['depth'] + 1}",
+                fill="#FFFFFF",
+                font=badge_font,
+            )
+
             self._draw_multiline_cell(
                 draw,
                 row["key_lines"],
-                key_x + cell_padding_x,
+                key_x + cell_padding_x + 56 + row["indent_width"],
                 current_y + row_padding_y,
                 body_font,
                 line_height,
@@ -558,7 +624,7 @@ class AstrBotPluginConfigManager(Star):
                 current_y + row_padding_y,
                 body_font,
                 line_height,
-                "#3D4852",
+                "#475569",
             )
             self._draw_multiline_cell(
                 draw,
@@ -632,6 +698,17 @@ class AstrBotPluginConfigManager(Star):
     def _line_height(self, draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
         bbox = draw.textbbox((0, 0), "Ag测试", font=font)
         return (bbox[3] - bbox[1]) + 6
+
+    def _depth_color(self, depth: int) -> str:
+        palette = [
+            "#2563EB",
+            "#0F766E",
+            "#B45309",
+            "#7C3AED",
+            "#BE185D",
+            "#475569",
+        ]
+        return palette[min(depth, len(palette) - 1)]
 
     def _measure_text_width(
         self,
