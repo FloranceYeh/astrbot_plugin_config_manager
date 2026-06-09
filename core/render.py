@@ -1,5 +1,5 @@
 import asyncio
-import textwrap
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -320,35 +320,63 @@ class RenderHelper:
         normalized = text.replace("\r\n", "\n").replace("\r", "\n")
         source_lines = normalized.split("\n") or [""]
         wrapped_lines: list[str] = []
-        base_char_width = max(1, self._measure_text_width(draw, "测", font))
-        max_chars = max(8, max_width // base_char_width)
 
         for line in source_lines:
             if not line:
                 wrapped_lines.append("")
                 continue
 
-            for piece in textwrap.wrap(
-                line,
-                width=max_chars,
-                break_long_words=True,
-                break_on_hyphens=False,
-            ) or [""]:
-                if self._measure_text_width(draw, piece, font) <= max_width:
-                    wrapped_lines.append(piece)
+            if self._measure_text_width(draw, line, font) <= max_width:
+                wrapped_lines.append(line)
+                continue
+
+            tokens = [token for token in re.split(r"([._/\-\s]+)", line) if token]
+            current = ""
+            for token in tokens:
+                trial = f"{current}{token}"
+                if current and self._measure_text_width(draw, trial, font) > max_width:
+                    wrapped_lines.append(current.rstrip())
+                    current = token.lstrip()
+                    if self._measure_text_width(draw, current, font) <= max_width:
+                        continue
+
+                if self._measure_text_width(draw, token, font) <= max_width:
+                    current = f"{current}{token}"
                     continue
 
-                current = ""
-                for char in piece:
-                    trial = current + char
-                    if current and self._measure_text_width(draw, trial, font) > max_width:
-                        wrapped_lines.append(current)
-                        current = char
-                    else:
-                        current = trial
                 if current:
-                    wrapped_lines.append(current)
+                    wrapped_lines.append(current.rstrip())
+                    current = ""
+
+                for piece in self._split_token_by_width(draw, token, font, max_width):
+                    if self._measure_text_width(draw, piece, font) <= max_width:
+                        wrapped_lines.append(piece)
+                    else:
+                        current = piece
+
+            if current:
+                wrapped_lines.append(current.rstrip())
         return wrapped_lines or [""]
+
+    def _split_token_by_width(
+        self,
+        draw: ImageDraw.ImageDraw,
+        token: str,
+        font: ImageFont.ImageFont,
+        max_width: int,
+    ) -> list[str]:
+        parts: list[str] = []
+        current = ""
+        for char in token:
+            trial = current + char
+            if current and self._measure_text_width(draw, trial, font) > max_width:
+                parts.append(current)
+                current = char
+            else:
+                current = trial
+        if current:
+            parts.append(current)
+        return parts
 
     def _draw_multiline_cell(
         self,
