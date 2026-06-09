@@ -337,7 +337,7 @@ class RenderHelper:
                 row["key_lines"],
                 badge_right + 10,
                 current_y + row_padding_y,
-                body_font,
+                badge_font,
                 line_height,
                 "#1F2937",
             )
