@@ -75,11 +75,11 @@ class RenderHelper:
 
         canvas_width = max(860, self._get_int_config("image_width", 1600))
         margin = 40
-        title_font = self._load_font(30)
-        subtitle_font = self._load_font(18)
-        section_font = self._load_font(18)
-        body_font = self._load_font(20)
-        badge_font = self._load_font(16)
+        title_font = self._load_ui_font(30)
+        subtitle_font = self._load_ui_font(18)
+        section_font = self._load_ui_font(18)
+        body_font = self._load_ui_font(20)
+        badge_font = self._load_mono_font(16)
 
         draw = ImageDraw.Draw(Image.new("RGB", (canvas_width, 10), "#FFFFFF"))
         title_height = self._line_height(draw, title_font)
@@ -168,11 +168,12 @@ class RenderHelper:
         if col_value < 280:
             raise ValueError("图片宽度过小，无法渲染配置表。")
 
-        title_font = self._load_font(30)
-        meta_font = self._load_font(18)
-        header_font = self._load_font(20)
-        body_font = self._load_font(18)
-        badge_font = self._load_font(16)
+        title_font = self._load_ui_font(30)
+        meta_font = self._load_ui_font(18)
+        header_font = self._load_ui_font(20)
+        body_font = self._load_ui_font(18)
+        badge_font = self._load_mono_font(16)
+        serial_font = self._load_mono_font(18)
         draw = ImageDraw.Draw(Image.new("RGB", (canvas_width, 10), "#FFFFFF"))
 
         rows: list[dict[str, Any]] = []
@@ -280,7 +281,7 @@ class RenderHelper:
             draw.line((value_x, current_y, value_x, current_y + row["height"]), fill="#E2E8F0", width=1)
 
             accent_color = self._depth_color(row["depth"])
-            serial_badge_width = max(42, self._measure_text_width(draw, row["serial_text"], body_font) + 20)
+            serial_badge_width = max(42, self._measure_text_width(draw, row["serial_text"], serial_font) + 20)
             serial_badge_left = serial_x + (col_serial - serial_badge_width) / 2
             serial_badge_top = current_y + row_padding_y
             serial_badge_right = serial_badge_left + serial_badge_width
@@ -292,12 +293,12 @@ class RenderHelper:
                 outline="#D3E0FF",
                 width=1,
             )
-            serial_text_width = self._measure_text_width(draw, row["serial_text"], body_font)
+            serial_text_width = self._measure_text_width(draw, row["serial_text"], serial_font)
             draw.text(
                 (serial_badge_left + (serial_badge_width - serial_text_width) / 2, serial_badge_top + 2),
                 row["serial_text"],
                 fill="#1D4ED8",
-                font=body_font,
+                font=serial_font,
             )
 
             draw.rounded_rectangle(
@@ -716,10 +717,24 @@ class RenderHelper:
         ]
         return palette[min(depth, len(palette) - 1)]
 
-    def _load_font(self, size: int) -> ImageFont.ImageFont:
+    def _load_ui_font(self, size: int) -> ImageFont.ImageFont:
         font_candidates = [
             self.font_dir / "LXGWWenKai-Regular.ttf",
             self.font_dir / "JetBrainsMono-Regular.ttf",
+        ]
+
+        for path in font_candidates:
+            if path.exists():
+                try:
+                    return ImageFont.truetype(str(path), size=size)
+                except OSError:
+                    continue
+        return ImageFont.load_default()
+
+    def _load_mono_font(self, size: int) -> ImageFont.ImageFont:
+        font_candidates = [
+            self.font_dir / "JetBrainsMono-Regular.ttf",
+            self.font_dir / "LXGWWenKai-Regular.ttf",
         ]
 
         for path in font_candidates:

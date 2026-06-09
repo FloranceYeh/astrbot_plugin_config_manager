@@ -21,7 +21,7 @@
     "description": "渲染图片宽度",
     "type": "int",
     "hint": "生成的配置表图片总宽度",
-    "default": 1600
+    "default": 1200
   },
   "image_max_rows": {
     "description": "最大渲染行数",
