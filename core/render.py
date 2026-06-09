@@ -16,6 +16,13 @@ class ConfigEntry:
     depth: int
 
 
+@dataclass
+class MessageLine:
+    kind: str
+    text: str
+    label: str = ""
+
+
 class RenderHelper:
     def __init__(
         self,
@@ -70,15 +77,23 @@ class RenderHelper:
         margin = 40
         title_font = self._load_font(30)
         subtitle_font = self._load_font(18)
+        section_font = self._load_font(18)
         body_font = self._load_font(20)
+        badge_font = self._load_font(16)
 
         draw = ImageDraw.Draw(Image.new("RGB", (canvas_width, 10), "#FFFFFF"))
-        body_width = canvas_width - margin * 2 - 32
-        body_lines = self._wrap_text(draw, message, body_font, body_width)
         title_height = self._line_height(draw, title_font)
         subtitle_height = self._line_height(draw, subtitle_font) if subtitle else 0
-        body_line_height = self._line_height(draw, body_font)
-        body_height = len(body_lines) * body_line_height
+        content_width = canvas_width - margin * 2 - 32
+        content_items = self._layout_message_lines(
+            draw=draw,
+            message=message,
+            body_font=body_font,
+            section_font=section_font,
+            badge_font=badge_font,
+            content_width=content_width,
+        )
+        body_height = sum(item["height"] for item in content_items) + max(0, len(content_items) - 1) * 10
 
         header_height = 96 + subtitle_height
         card_top = 24
@@ -107,15 +122,19 @@ class RenderHelper:
             outline="#E2E8F0",
             width=1,
         )
-        self._draw_multiline_cell(
-            draw,
-            body_lines,
-            margin + 16,
-            current_y + 16,
-            body_font,
-            body_line_height,
-            "#111827",
-        )
+        content_y = current_y + 16
+        for item in content_items:
+            self._draw_message_item(
+                draw=draw,
+                item=item,
+                x=margin + 16,
+                y=content_y,
+                width=content_width,
+                body_font=body_font,
+                section_font=section_font,
+                badge_font=badge_font,
+            )
+            content_y += item["height"] + 10
 
         output_path = render_dir / self._build_filename(filename_prefix, "png")
         image.save(output_path, format="PNG")
@@ -184,8 +203,7 @@ class RenderHelper:
             )
 
         table_header_height = 48
-        footer_height = 48 if was_truncated else 24
-        image_height = header_height + table_header_height + footer_height
+        image_height = header_height + table_header_height
         image_height += sum(row["height"] + row_gap for row in rows)
 
         image = Image.new("RGB", (canvas_width, image_height), "#F6F4EE")
@@ -293,11 +311,6 @@ class RenderHelper:
             )
             current_y += row["height"] + row_gap
 
-        footer_text = f"Rows: {len(visible_entries)} / {len(entries)}"
-        if was_truncated:
-            footer_text += "  (truncated)"
-        draw.text((margin, image_height - 44), footer_text, fill="#6B7280", font=meta_font)
-
         output_path = render_dir / self._build_filename(plugin_name, "png")
         image.save(output_path, format="PNG")
         return output_path
@@ -390,6 +403,224 @@ class RenderHelper:
     ):
         for index, line in enumerate(lines):
             draw.text((x, y + index * line_height), line, fill=fill, font=font)
+
+    def _layout_message_lines(
+        self,
+        draw: ImageDraw.ImageDraw,
+        message: str,
+        body_font: ImageFont.ImageFont,
+        section_font: ImageFont.ImageFont,
+        badge_font: ImageFont.ImageFont,
+        content_width: int,
+    ) -> list[dict[str, Any]]:
+        raw_lines = message.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        items: list[dict[str, Any]] = []
+        body_line_height = self._line_height(draw, body_font)
+        section_line_height = self._line_height(draw, section_font)
+
+        for raw_line in raw_lines:
+            line = raw_line.strip()
+            if not line:
+                items.append({"kind": "spacer", "height": 8})
+                continue
+
+            parsed = self._parse_message_line(line)
+            if parsed.kind == "section":
+                lines = self._wrap_text(draw, parsed.text, section_font, content_width - 20)
+                items.append(
+                    {
+                        "kind": "section",
+                        "label": "",
+                        "lines": lines,
+                        "height": len(lines) * section_line_height + 14,
+                    }
+                )
+                continue
+
+            if parsed.kind == "ordered":
+                text_width = content_width - 68
+                lines = self._wrap_text(draw, parsed.text, body_font, text_width)
+                items.append(
+                    {
+                        "kind": "ordered",
+                        "label": parsed.label,
+                        "lines": lines,
+                        "height": max(34, len(lines) * body_line_height + 18),
+                    }
+                )
+                continue
+
+            if parsed.kind == "bullet":
+                text_width = content_width - 42
+                lines = self._wrap_text(draw, parsed.text, body_font, text_width)
+                items.append(
+                    {
+                        "kind": "bullet",
+                        "label": parsed.label,
+                        "lines": lines,
+                        "height": max(28, len(lines) * body_line_height + 12),
+                    }
+                )
+                continue
+
+            if parsed.kind == "kv":
+                label_width = min(220, max(110, self._measure_text_width(draw, parsed.label, body_font) + 12))
+                value_width = content_width - label_width - 16
+                value_lines = self._wrap_text(draw, parsed.text, body_font, value_width)
+                items.append(
+                    {
+                        "kind": "kv",
+                        "label": parsed.label,
+                        "lines": value_lines,
+                        "label_width": label_width,
+                        "height": max(34, len(value_lines) * body_line_height + 16),
+                    }
+                )
+                continue
+
+            lines = self._wrap_text(draw, parsed.text, body_font, content_width - 16)
+            items.append(
+                {
+                    "kind": "plain",
+                    "label": "",
+                    "lines": lines,
+                    "height": len(lines) * body_line_height + 12,
+                }
+            )
+
+        while items and items[-1]["kind"] == "spacer":
+            items.pop()
+        return items or [{"kind": "plain", "label": "", "lines": [""], "height": body_line_height + 12}]
+
+    def _parse_message_line(self, line: str) -> MessageLine:
+        ordered_match = re.match(r"^(\d+)\.\s+(.*)$", line)
+        if ordered_match:
+            return MessageLine(kind="ordered", label=ordered_match.group(1), text=ordered_match.group(2))
+
+        if line.startswith("- "):
+            return MessageLine(kind="bullet", label="•", text=line[2:].strip())
+
+        if line.endswith("：") or line.endswith(":"):
+            return MessageLine(kind="section", text=line[:-1].strip())
+
+        kv_match = re.match(r"^([^:：]{1,20})[:：]\s*(.+)$", line)
+        if kv_match:
+            return MessageLine(kind="kv", label=kv_match.group(1).strip(), text=kv_match.group(2).strip())
+
+        return MessageLine(kind="plain", text=line)
+
+    def _draw_message_item(
+        self,
+        draw: ImageDraw.ImageDraw,
+        item: dict[str, Any],
+        x: int,
+        y: int,
+        width: int,
+        body_font: ImageFont.ImageFont,
+        section_font: ImageFont.ImageFont,
+        badge_font: ImageFont.ImageFont,
+    ):
+        body_line_height = self._line_height(draw, body_font)
+        section_line_height = self._line_height(draw, section_font)
+
+        if item["kind"] == "spacer":
+            return
+
+        if item["kind"] == "section":
+            draw.rounded_rectangle(
+                (x, y, x + width, y + item["height"]),
+                radius=12,
+                fill="#EEF4FF",
+                outline="#D6E4FF",
+                width=1,
+            )
+            self._draw_multiline_cell(
+                draw,
+                item["lines"],
+                x + 14,
+                y + 7,
+                section_font,
+                section_line_height,
+                "#1D4ED8",
+            )
+            return
+
+        if item["kind"] == "ordered":
+            draw.rounded_rectangle(
+                (x, y, x + width, y + item["height"]),
+                radius=12,
+                fill="#FFFFFF",
+                outline="#E5EAF3",
+                width=1,
+            )
+            badge_left = x + 10
+            badge_top = y + 8
+            badge_right = badge_left + 34
+            badge_bottom = badge_top + 22
+            draw.rounded_rectangle(
+                (badge_left, badge_top, badge_right, badge_bottom),
+                radius=8,
+                fill="#2563EB",
+            )
+            draw.text((badge_left + 10, badge_top + 2), item["label"], fill="#FFFFFF", font=badge_font)
+            self._draw_multiline_cell(
+                draw,
+                item["lines"],
+                x + 54,
+                y + 8,
+                body_font,
+                body_line_height,
+                "#0F172A",
+            )
+            return
+
+        if item["kind"] == "bullet":
+            draw.ellipse((x + 10, y + 10, x + 18, y + 18), fill="#0F766E")
+            self._draw_multiline_cell(
+                draw,
+                item["lines"],
+                x + 30,
+                y + 4,
+                body_font,
+                body_line_height,
+                "#0F172A",
+            )
+            return
+
+        if item["kind"] == "kv":
+            draw.rounded_rectangle(
+                (x, y, x + width, y + item["height"]),
+                radius=12,
+                fill="#FFFFFF",
+                outline="#E5EAF3",
+                width=1,
+            )
+            draw.rounded_rectangle(
+                (x + 8, y + 8, x + 8 + item["label_width"], y + item["height"] - 8),
+                radius=10,
+                fill="#F1F5F9",
+            )
+            draw.text((x + 18, y + 10), item["label"], fill="#334155", font=body_font)
+            self._draw_multiline_cell(
+                draw,
+                item["lines"],
+                x + 18 + item["label_width"],
+                y + 8,
+                body_font,
+                body_line_height,
+                "#0F172A",
+            )
+            return
+
+        self._draw_multiline_cell(
+            draw,
+            item["lines"],
+            x + 4,
+            y + 4,
+            body_font,
+            body_line_height,
+            "#111827",
+        )
 
     def _line_height(self, draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
         bbox = draw.textbbox((0, 0), "Ag测试", font=font)
