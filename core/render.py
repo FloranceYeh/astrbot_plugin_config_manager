@@ -203,7 +203,8 @@ class RenderHelper:
             )
 
         table_header_height = 48
-        image_height = header_height + table_header_height
+        footer_height = 48
+        image_height = header_height + table_header_height + footer_height
         image_height += sum(row["height"] + row_gap for row in rows)
 
         image = Image.new("RGB", (canvas_width, image_height), "#F6F4EE")
@@ -503,11 +504,36 @@ class RenderHelper:
         if line.endswith("：") or line.endswith(":"):
             return MessageLine(kind="section", text=line[:-1].strip())
 
-        kv_match = re.match(r"^([^:：]{1,20})[:：]\s*(.+)$", line)
+        if self._looks_like_literal_value(line):
+            return MessageLine(kind="plain", text=line)
+
+        kv_match = re.match(
+            r"^([A-Za-z0-9_\-\u4e00-\u9fff()（）\s]{1,20})[:：]\s*(.+)$",
+            line,
+        )
         if kv_match:
             return MessageLine(kind="kv", label=kv_match.group(1).strip(), text=kv_match.group(2).strip())
 
         return MessageLine(kind="plain", text=line)
+
+    def _looks_like_literal_value(self, line: str) -> bool:
+        stripped = line.strip()
+        if not stripped:
+            return False
+
+        if stripped.startswith(("http://", "https://", "ftp://")):
+            return True
+
+        if stripped.startswith(("\"http://", "\"https://", "'http://", "'https://")):
+            return True
+
+        if stripped[0] in {'"', "'", "{", "[", "(", "<"}:
+            return True
+
+        if "://" in stripped:
+            return True
+
+        return False
 
     def _draw_message_item(
         self,

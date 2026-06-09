@@ -44,9 +44,14 @@ class AstrBotPluginConfigManager(Star):
                 "6. 插件配置备份 <插件名>",
                 "7. 插件配置备份列表 <插件名>",
                 "8. 插件配置恢复 <插件名> <备份文件名>",
+                "9. 插件配置预设保存 <插件名> <预设名>",
+                "10. 插件配置预设列表 <插件名>",
+                "11. 插件配置预设应用 <插件名> <预设名>",
+                "12. 插件配置预设删除 <插件名> <预设名>",
                 "",
                 "所有命令输出默认渲染为图片。",
                 "查看命令会输出配置表格图片，展示 Key(点号路径) 与 Value。",
+                "配置预设用于保存并快捷切换某个插件的整份配置。",
                 "键路径支持点号访问，例如：server.port、providers.0.model",
                 "设置值会优先按 JSON 解析；解析失败时按普通字符串写入。",
             ]
@@ -270,6 +275,119 @@ class AstrBotPluginConfigManager(Star):
         except Exception as exc:
             yield await self._error_result(event, self._handle_unexpected_error(exc))
 
+    @filter.command("插件配置预设保存", alias={"plugin-config-preset-save", "pconf-preset-save"})
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def save_preset(
+        self,
+        event: AstrMessageEvent,
+        plugin_name: str,
+        preset_name: str,
+    ):
+        """保存插件配置为预设。"""
+        try:
+            config_path = self._get_plugin_config_path(plugin_name)
+            config_data = await self._load_json(config_path)
+            preset_path = self._get_preset_path(plugin_name, preset_name)
+            await self._save_json(preset_path, config_data)
+            yield await self._message_result(
+                event,
+                f"已保存预设：{preset_name}\n来源插件：{plugin_name}",
+                title="配置预设保存成功",
+                subtitle=f"Plugin: {plugin_name}",
+                filename_prefix="preset-save",
+            )
+        except Exception as exc:
+            yield await self._error_result(event, self._handle_unexpected_error(exc))
+
+    @filter.command("插件配置预设列表", alias={"plugin-config-preset-list", "pconf-preset-list"})
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def list_presets(
+        self,
+        event: AstrMessageEvent,
+        plugin_name: str,
+    ):
+        """列出插件配置预设。"""
+        try:
+            preset_dir = self._get_preset_dir(plugin_name)
+            if not preset_dir.exists():
+                yield await self._error_result(event, f"{plugin_name} 暂无配置预设。")
+                return
+
+            preset_files = sorted(preset_dir.glob("*.json"))
+            if not preset_files:
+                yield await self._error_result(event, f"{plugin_name} 暂无配置预设。")
+                return
+
+            lines = [f"{plugin_name} 的配置预设："]
+            for preset_file in preset_files:
+                lines.append(f"- {preset_file.stem}")
+            yield await self._message_result(
+                event,
+                "\n".join(lines),
+                title="配置预设列表",
+                subtitle=f"Plugin: {plugin_name}",
+                filename_prefix="preset-list",
+            )
+        except Exception as exc:
+            yield await self._error_result(event, self._handle_unexpected_error(exc))
+
+    @filter.command("插件配置预设应用", alias={"plugin-config-preset-apply", "pconf-preset-apply"})
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def apply_preset(
+        self,
+        event: AstrMessageEvent,
+        plugin_name: str,
+        preset_name: str,
+    ):
+        """应用指定配置预设。"""
+        try:
+            preset_path = self._get_preset_path(plugin_name, preset_name)
+            if not preset_path.exists():
+                raise FileNotFoundError(f"预设不存在：{preset_name}")
+
+            config_path = self._get_plugin_config_path(plugin_name, allow_missing=True)
+            if config_path.exists():
+                await self._create_backup(plugin_name, config_path)
+
+            preset_data = await self._load_json(preset_path)
+            await self._save_json(config_path, preset_data)
+            logger.info(f"applied preset for {plugin_name}: {preset_name}")
+            yield await self._message_result(
+                event,
+                f"已应用预设：{preset_name}\n目标插件：{plugin_name}",
+                title="配置预设应用成功",
+                subtitle=f"Plugin: {plugin_name}",
+                filename_prefix="preset-apply",
+            )
+        except Exception as exc:
+            yield await self._error_result(event, self._handle_unexpected_error(exc))
+
+    @filter.command("插件配置预设删除", alias={"plugin-config-preset-delete", "pconf-preset-delete"})
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def delete_preset(
+        self,
+        event: AstrMessageEvent,
+        plugin_name: str,
+        preset_name: str,
+    ):
+        """删除指定配置预设。"""
+        try:
+            preset_path = self._get_preset_path(plugin_name, preset_name)
+            if not preset_path.exists():
+                raise FileNotFoundError(f"预设不存在：{preset_name}")
+
+            await asyncio.to_thread(preset_path.unlink)
+            logger.info(f"deleted preset for {plugin_name}: {preset_name}")
+            yield await self._message_result(
+                event,
+                f"已删除预设：{preset_name}\n目标插件：{plugin_name}",
+                title="配置预设删除成功",
+                subtitle=f"Plugin: {plugin_name}",
+                filename_prefix="preset-delete",
+            )
+        except Exception as exc:
+            yield await self._error_result(event, self._handle_unexpected_error(exc))
+
     async def terminate(self):
         """插件卸载时调用。"""
 
@@ -282,6 +400,9 @@ class AstrBotPluginConfigManager(Star):
     def _get_backup_dir(self, plugin_name: str) -> Path:
         return self.data_dir / "backups" / self._sanitize_plugin_name(plugin_name)
 
+    def _get_preset_dir(self, plugin_name: str) -> Path:
+        return self.data_dir / "presets" / self._sanitize_plugin_name(plugin_name)
+
     def _get_backup_path(self, plugin_name: str, backup_name: str) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", backup_name):
             raise ConfigPathError("备份文件名非法。")
@@ -290,6 +411,14 @@ class AstrBotPluginConfigManager(Star):
         if backup_path.parent != backup_dir:
             raise ConfigPathError("备份文件路径越界。")
         return backup_path
+
+    def _get_preset_path(self, plugin_name: str, preset_name: str) -> Path:
+        safe_preset_name = self._sanitize_preset_name(preset_name)
+        preset_dir = self._get_preset_dir(plugin_name).resolve()
+        preset_path = (preset_dir / f"{safe_preset_name}.json").resolve()
+        if preset_path.parent != preset_dir:
+            raise ConfigPathError("预设文件路径越界。")
+        return preset_path
 
     def _get_plugin_config_path(
         self,
@@ -311,6 +440,14 @@ class AstrBotPluginConfigManager(Star):
             raise ConfigPathError("插件名不能为空。")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", candidate):
             raise ConfigPathError("插件名仅允许字母、数字、点、下划线和中划线。")
+        return candidate
+
+    def _sanitize_preset_name(self, preset_name: str) -> str:
+        candidate = preset_name.strip()
+        if not candidate:
+            raise ConfigPathError("预设名不能为空。")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", candidate):
+            raise ConfigPathError("预设名仅允许字母、数字、点、下划线和中划线。")
         return candidate
 
     def _parse_key_path(self, key_path: str) -> list[str | int]:

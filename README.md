@@ -12,6 +12,7 @@
 - 支持写入和删除配置项
 - 在修改前自动创建备份
 - 支持列出备份并按备份文件名恢复
+- 支持保存、列出、应用、删除配置预设
 
 ## 命令
 
@@ -24,6 +25,10 @@
 - `插件配置备份 <插件名>`
 - `插件配置备份列表 <插件名>`
 - `插件配置恢复 <插件名> <备份文件名>`
+- `插件配置预设保存 <插件名> <预设名>`
+- `插件配置预设列表 <插件名>`
+- `插件配置预设应用 <插件名> <预设名>`
+- `插件配置预设删除 <插件名> <预设名>`
 
 ## 示例
 
@@ -37,6 +42,10 @@
 插件配置备份 astrbot_plugin_example
 插件配置备份列表 astrbot_plugin_example
 插件配置恢复 astrbot_plugin_example 20260609_120000.json
+插件配置预设保存 astrbot_plugin_example office_mode
+插件配置预设列表 astrbot_plugin_example
+插件配置预设应用 astrbot_plugin_example office_mode
+插件配置预设删除 astrbot_plugin_example office_mode
 ```
 
 ## WebUI 配置项
@@ -56,5 +65,6 @@
 
 - 所有命令仅管理员可用
 - 备份文件保存在 `data/plugin_data/astrbot_plugin_config_manager/backups/`
+- 配置预设保存在 `data/plugin_data/astrbot_plugin_config_manager/presets/`
 - 渲染后的图片保存在 `data/plugin_data/astrbot_plugin_config_manager/rendered_configs/`
 - 如果实际仓库地址与 `metadata.yaml` 中的 `repo` 不一致，发布前请改成真实地址
