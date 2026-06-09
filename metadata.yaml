@@ -1,0 +1,22 @@
+name: astrbot_plugin_config_manager
+display_name: Plugin Config Manager
+author: FloranceYeh
+version: 1.0.0
+desc: Manage AstrBot plugin config files with list, view, edit, backup and restore.
+repo: https://github.com/FloranceYeh/astrbot_plugin_config_manager
+astrbot_version: ">=4.16,<5"
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - telegram
+  - wecom
+  - lark
+  - dingtalk
+  - discord
+  - slack
+  - kook
+  - vocechat
+  - weixin_official_account
+  - satori
+  - misskey
+  - line

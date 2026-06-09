@@ -1,0 +1,20 @@
+{
+  "config_dir_override": {
+    "description": "配置目录覆盖路径",
+    "type": "string",
+    "hint": "留空时自动使用 AstrBot data/config 目录",
+    "default": ""
+  },
+  "backup_keep_count": {
+    "description": "每个插件保留的备份数量",
+    "type": "int",
+    "hint": "超过数量时自动删除最旧备份",
+    "default": 10
+  },
+  "preview_limit": {
+    "description": "查看配置时的字符上限",
+    "type": "int",
+    "hint": "超过上限时自动截断返回内容",
+    "default": 3500
+  }
+}
