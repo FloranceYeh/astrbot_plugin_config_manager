@@ -225,10 +225,10 @@ class RenderHelper:
             width=2,
         )
         draw.text((margin, 34), f"插件配置：{plugin_name}", fill="#1F2937", font=title_font)
-        draw.text((margin, 74), "查看图中的序号可直接用于 获取 / 设置 / 删除", fill="#64748B", font=meta_font)
+        draw.text((margin, 80), "查看图中的序号可直接用于 获取 / 设置 / 删除", fill="#64748B", font=meta_font)
 
-        meta_box_top = 130
-        meta_box_bottom = 160
+        meta_box_top = 120
+        meta_box_bottom = 150
         draw.rounded_rectangle(
             (margin, meta_box_top, canvas_width - margin, meta_box_bottom),
             radius=14,
@@ -237,13 +237,13 @@ class RenderHelper:
             width=1,
         )
         draw.text(
-            (margin + 18, meta_box_top + 15),
+            (margin + 18, meta_box_top + 5),
             f"文件: {config_path.name}",
             fill="#334155",
             font=meta_font,
         )
         draw.text(
-            (canvas_width - margin - 320, meta_box_top + 15),
+            (canvas_width - margin - 320, meta_box_top + 5),
             f"条目数: {len(visible_entries)}/{len(entries)}  层级深度: {max_depth + 1}",
             fill="#475569",
             font=meta_font,
