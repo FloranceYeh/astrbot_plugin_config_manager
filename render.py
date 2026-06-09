@@ -1,0 +1,420 @@
+import asyncio
+import textwrap
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable
+
+from PIL import Image, ImageDraw, ImageFont
+
+
+@dataclass
+class ConfigEntry:
+    key_name: str
+    dot_path: str
+    value_text: str
+    depth: int
+
+
+class RenderHelper:
+    def __init__(
+        self,
+        data_dir: Path,
+        raw_config_getter: Callable[[str, Any], Any],
+        int_config_getter: Callable[[str, int], int],
+    ):
+        self.data_dir = data_dir
+        self._get_raw_config_value = raw_config_getter
+        self._get_int_config = int_config_getter
+
+    async def render_text_card(
+        self,
+        title: str,
+        message: str,
+        subtitle: str = "",
+        filename_prefix: str = "message",
+    ) -> Path:
+        return await asyncio.to_thread(
+            self._render_text_card_sync,
+            title,
+            message,
+            subtitle,
+            filename_prefix,
+        )
+
+    async def render_config_table(
+        self,
+        plugin_name: str,
+        config_path: Path,
+        entries: list[ConfigEntry],
+    ) -> Path:
+        return await asyncio.to_thread(
+            self._render_config_table_sync,
+            plugin_name,
+            config_path,
+            entries,
+        )
+
+    def _render_text_card_sync(
+        self,
+        title: str,
+        message: str,
+        subtitle: str,
+        filename_prefix: str,
+    ) -> Path:
+        render_dir = self._get_render_dir()
+        render_dir.mkdir(parents=True, exist_ok=True)
+        self._trim_rendered_images(render_dir)
+
+        canvas_width = max(860, self._get_int_config("image_width", 1600))
+        margin = 40
+        title_font = self._load_font(30)
+        subtitle_font = self._load_font(18)
+        body_font = self._load_font(20)
+
+        draw = ImageDraw.Draw(Image.new("RGB", (canvas_width, 10), "#FFFFFF"))
+        body_width = canvas_width - margin * 2 - 32
+        body_lines = self._wrap_text(draw, message, body_font, body_width)
+        title_height = self._line_height(draw, title_font)
+        subtitle_height = self._line_height(draw, subtitle_font) if subtitle else 0
+        body_line_height = self._line_height(draw, body_font)
+        body_height = len(body_lines) * body_line_height
+
+        header_height = 96 + subtitle_height
+        card_top = 24
+        card_bottom = header_height + body_height + 88
+        image_height = card_bottom + 24
+
+        image = Image.new("RGB", (canvas_width, image_height), "#F6F4EE")
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle(
+            (24, card_top, canvas_width - 24, card_bottom),
+            radius=24,
+            fill="#FFFDF7",
+            outline="#D8D1C0",
+            width=2,
+        )
+        draw.text((margin, 44), title, fill="#1F2937", font=title_font)
+        current_y = 44 + title_height + 8
+        if subtitle:
+            draw.text((margin, current_y), subtitle, fill="#64748B", font=subtitle_font)
+            current_y += subtitle_height + 14
+
+        draw.rounded_rectangle(
+            (margin, current_y, canvas_width - margin, card_bottom - 32),
+            radius=16,
+            fill="#F8FAFC",
+            outline="#E2E8F0",
+            width=1,
+        )
+        self._draw_multiline_cell(
+            draw,
+            body_lines,
+            margin + 16,
+            current_y + 16,
+            body_font,
+            body_line_height,
+            "#111827",
+        )
+
+        output_path = render_dir / self._build_filename(filename_prefix, "png")
+        image.save(output_path, format="PNG")
+        return output_path
+
+    def _render_config_table_sync(
+        self,
+        plugin_name: str,
+        config_path: Path,
+        entries: list[ConfigEntry],
+    ) -> Path:
+        render_dir = self._get_render_dir()
+        render_dir.mkdir(parents=True, exist_ok=True)
+        self._trim_rendered_images(render_dir)
+
+        max_rows = max(1, self._get_int_config("image_max_rows", 300))
+        was_truncated = len(entries) > max_rows
+        visible_entries = entries[:max_rows]
+        max_depth = max((entry.depth for entry in visible_entries), default=0)
+
+        canvas_width = max(960, self._get_int_config("image_width", 1600))
+        margin = 40
+        header_height = 156
+        row_padding_y = 14
+        cell_padding_x = 12
+        row_gap = 1
+        col_key = 560
+        col_value = canvas_width - margin * 2 - col_key
+        if col_value < 280:
+            raise ValueError("图片宽度过小，无法渲染配置表。")
+
+        title_font = self._load_font(30)
+        meta_font = self._load_font(18)
+        header_font = self._load_font(20)
+        body_font = self._load_font(18)
+        badge_font = self._load_font(16)
+        draw = ImageDraw.Draw(Image.new("RGB", (canvas_width, 10), "#FFFFFF"))
+
+        rows: list[dict[str, Any]] = []
+        for entry in visible_entries:
+            indent_width = min(entry.depth, 6) * 22
+            key_text_width = col_key - cell_padding_x * 2 - 50 - indent_width
+            key_lines = self._wrap_text(
+                draw,
+                entry.dot_path,
+                body_font,
+                max(80, key_text_width),
+            )
+            value_lines = self._wrap_text(
+                draw,
+                entry.value_text,
+                body_font,
+                col_value - cell_padding_x * 2,
+            )
+            line_count = max(len(key_lines), len(value_lines))
+            line_height = self._line_height(draw, body_font)
+            row_height = row_padding_y * 2 + line_count * line_height
+            rows.append(
+                {
+                    "key_lines": key_lines,
+                    "value_lines": value_lines,
+                    "height": row_height,
+                    "depth": entry.depth,
+                    "indent_width": indent_width,
+                }
+            )
+
+        table_header_height = 48
+        footer_height = 48 if was_truncated else 24
+        image_height = header_height + table_header_height + footer_height
+        image_height += sum(row["height"] + row_gap for row in rows)
+
+        image = Image.new("RGB", (canvas_width, image_height), "#F6F4EE")
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle(
+            (24, 20, canvas_width - 24, image_height - 20),
+            radius=24,
+            fill="#FFFDF7",
+            outline="#D8D1C0",
+            width=2,
+        )
+        draw.text((margin, 34), f"Plugin Config: {plugin_name}", fill="#1F2937", font=title_font)
+        draw.text((margin, 68), "Flattened view for config keys", fill="#64748B", font=meta_font)
+
+        meta_box_top = 94
+        meta_box_bottom = 134
+        draw.rounded_rectangle(
+            (margin, meta_box_top, canvas_width - margin, meta_box_bottom),
+            radius=14,
+            fill="#F3F6FB",
+            outline="#D6DEEB",
+            width=1,
+        )
+        draw.text(
+            (margin + 18, meta_box_top + 10),
+            f"文件: {config_path.name}",
+            fill="#334155",
+            font=meta_font,
+        )
+        draw.text(
+            (canvas_width - margin - 320, meta_box_top + 10),
+            f"条目数: {len(visible_entries)}/{len(entries)}  层级深度: {max_depth + 1}",
+            fill="#475569",
+            font=meta_font,
+        )
+
+        table_top = header_height
+        table_left = margin
+        table_right = canvas_width - margin
+        draw.rounded_rectangle(
+            (table_left, table_top, table_right, table_top + table_header_height),
+            radius=16,
+            fill="#DDE8F7",
+            outline="#C1D0E6",
+            width=1,
+        )
+
+        key_x = table_left
+        value_x = key_x + col_key
+        header_y = table_top + 12
+        draw.text((key_x + cell_padding_x, header_y), "Key", fill="#102A43", font=header_font)
+        draw.text((value_x + cell_padding_x, header_y), "Value", fill="#102A43", font=header_font)
+
+        current_y = table_top + table_header_height + row_gap
+        line_height = self._line_height(draw, body_font)
+        for index, row in enumerate(rows):
+            fill = "#FFFFFF" if index % 2 == 0 else "#F7F9FC"
+            draw.rectangle(
+                (table_left, current_y, table_right, current_y + row["height"]),
+                fill=fill,
+                outline="#E2E8F0",
+                width=1,
+            )
+            draw.line((value_x, current_y, value_x, current_y + row["height"]), fill="#E2E8F0", width=1)
+
+            accent_color = self._depth_color(row["depth"])
+            draw.rounded_rectangle(
+                (key_x + 8, current_y + 8, key_x + 14, current_y + row["height"] - 8),
+                radius=3,
+                fill=accent_color,
+            )
+
+            badge_left = key_x + cell_padding_x + 14
+            badge_top = current_y + row_padding_y
+            badge_right = badge_left + 34
+            badge_bottom = badge_top + 22
+            draw.rounded_rectangle(
+                (badge_left, badge_top, badge_right, badge_bottom),
+                radius=8,
+                fill=accent_color,
+            )
+            draw.text(
+                (badge_left + 8, badge_top + 2),
+                f"L{row['depth'] + 1}",
+                fill="#FFFFFF",
+                font=badge_font,
+            )
+            self._draw_multiline_cell(
+                draw,
+                row["key_lines"],
+                key_x + cell_padding_x + 56 + row["indent_width"],
+                current_y + row_padding_y,
+                body_font,
+                line_height,
+                "#1F2937",
+            )
+            self._draw_multiline_cell(
+                draw,
+                row["value_lines"],
+                value_x + cell_padding_x,
+                current_y + row_padding_y,
+                body_font,
+                line_height,
+                "#111827",
+            )
+            current_y += row["height"] + row_gap
+
+        footer_text = f"Rows: {len(visible_entries)} / {len(entries)}"
+        if was_truncated:
+            footer_text += "  (truncated)"
+        draw.text((margin, image_height - 44), footer_text, fill="#6B7280", font=meta_font)
+
+        output_path = render_dir / self._build_filename(plugin_name, "png")
+        image.save(output_path, format="PNG")
+        return output_path
+
+    def _get_render_dir(self) -> Path:
+        return self.data_dir / "rendered_configs"
+
+    def _build_filename(self, prefix: str, ext: str) -> str:
+        safe_prefix = "".join(char if char.isalnum() or char in "._-" else "_" for char in prefix)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        return f"{safe_prefix}_{timestamp}.{ext}"
+
+    def _wrap_text(
+        self,
+        draw: ImageDraw.ImageDraw,
+        text: str,
+        font: ImageFont.ImageFont,
+        max_width: int,
+    ) -> list[str]:
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        source_lines = normalized.split("\n") or [""]
+        wrapped_lines: list[str] = []
+        base_char_width = max(1, self._measure_text_width(draw, "测", font))
+        max_chars = max(8, max_width // base_char_width)
+
+        for line in source_lines:
+            if not line:
+                wrapped_lines.append("")
+                continue
+
+            for piece in textwrap.wrap(
+                line,
+                width=max_chars,
+                break_long_words=True,
+                break_on_hyphens=False,
+            ) or [""]:
+                if self._measure_text_width(draw, piece, font) <= max_width:
+                    wrapped_lines.append(piece)
+                    continue
+
+                current = ""
+                for char in piece:
+                    trial = current + char
+                    if current and self._measure_text_width(draw, trial, font) > max_width:
+                        wrapped_lines.append(current)
+                        current = char
+                    else:
+                        current = trial
+                if current:
+                    wrapped_lines.append(current)
+        return wrapped_lines or [""]
+
+    def _draw_multiline_cell(
+        self,
+        draw: ImageDraw.ImageDraw,
+        lines: list[str],
+        x: int,
+        y: int,
+        font: ImageFont.ImageFont,
+        line_height: int,
+        fill: str,
+    ):
+        for index, line in enumerate(lines):
+            draw.text((x, y + index * line_height), line, fill=fill, font=font)
+
+    def _line_height(self, draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
+        bbox = draw.textbbox((0, 0), "Ag测试", font=font)
+        return (bbox[3] - bbox[1]) + 6
+
+    def _measure_text_width(
+        self,
+        draw: ImageDraw.ImageDraw,
+        text: str,
+        font: ImageFont.ImageFont,
+    ) -> int:
+        bbox = draw.textbbox((0, 0), text or " ", font=font)
+        return bbox[2] - bbox[0]
+
+    def _depth_color(self, depth: int) -> str:
+        palette = [
+            "#2563EB",
+            "#0F766E",
+            "#B45309",
+            "#7C3AED",
+            "#BE185D",
+            "#475569",
+        ]
+        return palette[min(depth, len(palette) - 1)]
+
+    def _load_font(self, size: int) -> ImageFont.ImageFont:
+        configured_font = str(self._get_raw_config_value("font_path", "")).strip()
+        font_candidates = []
+        if configured_font:
+            font_candidates.append(configured_font)
+        font_candidates.extend(
+            [
+                "C:/Windows/Fonts/msyh.ttc",
+                "C:/Windows/Fonts/msyhbd.ttc",
+                "C:/Windows/Fonts/simhei.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                "/System/Library/Fonts/PingFang.ttc",
+                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            ]
+        )
+
+        for candidate in font_candidates:
+            path = Path(candidate)
+            if path.exists():
+                try:
+                    return ImageFont.truetype(str(path), size=size)
+                except OSError:
+                    continue
+        return ImageFont.load_default()
+
+    def _trim_rendered_images(self, render_dir: Path):
+        keep_count = max(1, self._get_int_config("render_image_keep_count", 20))
+        rendered_files = sorted(render_dir.glob("*.png"), reverse=True)
+        for obsolete in rendered_files[keep_count:]:
+            obsolete.unlink(missing_ok=True)
