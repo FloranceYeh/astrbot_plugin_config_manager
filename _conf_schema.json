@@ -28,17 +28,5 @@
     "type": "int",
     "hint": "超过该数量的配置项会被截断",
     "default": 300
-  },
-  "render_image_keep_count": {
-    "description": "保留的渲染图片数量",
-    "type": "int",
-    "hint": "超过数量后自动删除更早生成的图片",
-    "default": 20
-  },
-  "font_path": {
-    "description": "自定义字体文件路径",
-    "type": "string",
-    "hint": "当默认字体无法正确显示你的语言时填写此项",
-    "default": ""
   }
 }

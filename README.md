@@ -59,8 +59,6 @@
 - `backup_keep_count`：每个插件保留的备份数量
 - `image_width`：生成图片的宽度
 - `image_max_rows`：单张图片最多渲染多少行配置
-- `render_image_keep_count`：保留多少张历史渲染图片
-- `font_path`：自定义字体文件路径，用于处理默认字体无法正确显示的情况
 
 ## 依赖
 
@@ -73,5 +71,3 @@
 - 查看图片中的配置项层级序号可用于 `获取 / 设置 / 删除`，例如 `2.1`、`4.1`、`4.2`
 - 备份文件保存在 `data/plugin_data/astrbot_plugin_config_manager/backups/`
 - 配置预设保存在 `data/plugin_data/astrbot_plugin_config_manager/presets/`
-- 渲染后的图片保存在 `data/plugin_data/astrbot_plugin_config_manager/rendered_configs/`
-- 如果实际仓库地址与 `metadata.yaml` 中的 `repo` 不一致，发布前请改成真实地址

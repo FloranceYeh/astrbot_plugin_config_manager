@@ -28,12 +28,11 @@ class RenderHelper:
     def __init__(
         self,
         data_dir: Path,
-        raw_config_getter: Callable[[str, Any], Any],
         int_config_getter: Callable[[str, int], int],
     ):
         self.data_dir = data_dir
-        self._get_raw_config_value = raw_config_getter
         self._get_int_config = int_config_getter
+        self.font_dir = Path(__file__).resolve().parent.parent / "fonts"
 
     async def render_text_card(
         self,
@@ -72,7 +71,7 @@ class RenderHelper:
     ) -> Path:
         render_dir = self._get_render_dir()
         render_dir.mkdir(parents=True, exist_ok=True)
-        self._trim_rendered_images(render_dir)
+        self._clear_rendered_images(render_dir)
 
         canvas_width = max(860, self._get_int_config("image_width", 1600))
         margin = 40
@@ -149,7 +148,7 @@ class RenderHelper:
     ) -> Path:
         render_dir = self._get_render_dir()
         render_dir.mkdir(parents=True, exist_ok=True)
-        self._trim_rendered_images(render_dir)
+        self._clear_rendered_images(render_dir)
 
         max_rows = max(1, self._get_int_config("image_max_rows", 300))
         was_truncated = len(entries) > max_rows
@@ -718,24 +717,12 @@ class RenderHelper:
         return palette[min(depth, len(palette) - 1)]
 
     def _load_font(self, size: int) -> ImageFont.ImageFont:
-        configured_font = str(self._get_raw_config_value("font_path", "")).strip()
-        font_candidates = []
-        if configured_font:
-            font_candidates.append(configured_font)
-        font_candidates.extend(
-            [
-                "C:/Windows/Fonts/msyh.ttc",
-                "C:/Windows/Fonts/msyhbd.ttc",
-                "C:/Windows/Fonts/simhei.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-                "/System/Library/Fonts/PingFang.ttc",
-                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-            ]
-        )
+        font_candidates = [
+            self.font_dir / "LXGWWenKai-Regular.ttf",
+            self.font_dir / "JetBrainsMono-Regular.ttf",
+        ]
 
-        for candidate in font_candidates:
-            path = Path(candidate)
+        for path in font_candidates:
             if path.exists():
                 try:
                     return ImageFont.truetype(str(path), size=size)
@@ -743,8 +730,6 @@ class RenderHelper:
                     continue
         return ImageFont.load_default()
 
-    def _trim_rendered_images(self, render_dir: Path):
-        keep_count = max(1, self._get_int_config("render_image_keep_count", 20))
-        rendered_files = sorted(render_dir.glob("*.png"), reverse=True)
-        for obsolete in rendered_files[keep_count:]:
-            obsolete.unlink(missing_ok=True)
+    def _clear_rendered_images(self, render_dir: Path):
+        for rendered_file in render_dir.glob("*.png"):
+            rendered_file.unlink(missing_ok=True)

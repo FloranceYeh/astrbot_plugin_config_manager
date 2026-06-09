@@ -25,7 +25,6 @@ class AstrBotPluginConfigManager(Star):
         self.data_dir = StarTools.get_data_dir()
         self.renderer = RenderHelper(
             data_dir=self.data_dir,
-            raw_config_getter=self._get_raw_config_value,
             int_config_getter=self._get_int_config,
         )
 
@@ -119,6 +118,7 @@ class AstrBotPluginConfigManager(Star):
                 config_path=config_path,
                 entries=entries,
             )
+            self._schedule_render_cleanup(render_path)
             yield event.image_result(str(render_path))
         except Exception as exc:
             yield await self._error_result(event, self._handle_unexpected_error(exc))
@@ -757,6 +757,7 @@ class AstrBotPluginConfigManager(Star):
                 subtitle=subtitle,
                 filename_prefix=filename_prefix,
             )
+            self._schedule_render_cleanup(render_path)
             return event.image_result(str(render_path))
         except Exception as exc:
             logger.error(f"render message image failed: {exc}")
@@ -770,6 +771,16 @@ class AstrBotPluginConfigManager(Star):
             subtitle="Plugin Config Manager",
             filename_prefix="error",
         )
+
+    def _schedule_render_cleanup(self, render_path: Path):
+        asyncio.create_task(self._delete_render_file_later(render_path))
+
+    async def _delete_render_file_later(self, render_path: Path):
+        try:
+            await asyncio.sleep(120)
+            render_path.unlink(missing_ok=True)
+        except Exception as exc:
+            logger.warning(f"cleanup rendered image failed: {exc}")
 
     async def _load_json(
         self,
