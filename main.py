@@ -37,20 +37,21 @@ class AstrBotPluginConfigManager(Star):
             [
                 "插件配置管理命令：",
                 "1. 插件配置列表",
-                "2. 插件配置查看 <插件名>",
-                "3. 插件配置获取 <插件名> <键路径>",
-                "4. 插件配置设置 <插件名> <键路径> <值>",
-                "5. 插件配置删除 <插件名> <键路径>",
-                "6. 插件配置备份 <插件名>",
-                "7. 插件配置备份列表 <插件名>",
-                "8. 插件配置恢复 <插件名> <备份文件名>",
-                "9. 插件配置预设保存 <插件名> <预设名>",
-                "10. 插件配置预设列表 <插件名>",
-                "11. 插件配置预设应用 <插件名> <预设名>",
-                "12. 插件配置预设删除 <插件名> <预设名>",
+                "2. 插件配置查看 <插件名|序号>",
+                "3. 插件配置获取 <插件名|序号> <键路径|序号>",
+                "4. 插件配置设置 <插件名|序号> <键路径|序号> <值>",
+                "5. 插件配置删除 <插件名|序号> <键路径|序号>",
+                "6. 插件配置备份 <插件名|序号>",
+                "7. 插件配置备份列表 <插件名|序号>",
+                "8. 插件配置恢复 <插件名|序号> <备份文件名>",
+                "9. 插件配置预设保存 <插件名|序号> <预设名>",
+                "10. 插件配置预设列表 <插件名|序号>",
+                "11. 插件配置预设应用 <插件名|序号> <预设名>",
+                "12. 插件配置预设删除 <插件名|序号> <预设名>",
                 "",
                 "所有命令输出默认渲染为图片。",
-                "查看命令会输出配置表格图片，展示 Key(点号路径) 与 Value。",
+                "插件列表中的序号可直接代替插件名；查看图中的配置项序号支持层级写法，如 2.1、4.2。",
+                "查看命令会输出配置表格图片，展示路径 Key(点号路径) 与 Value。",
                 "配置预设用于保存并快捷切换某个插件的整份配置。",
                 "键路径支持点号访问，例如：server.port、providers.0.model",
                 "设置值会优先按 JSON 解析；解析失败时按普通字符串写入。",
@@ -74,20 +75,21 @@ class AstrBotPluginConfigManager(Star):
                 yield await self._error_result(event, f"配置目录不存在：{config_dir}")
                 return
 
-            config_files = sorted(config_dir.glob("*_config.json"))
-            if not config_files:
+            config_items = self._list_plugin_configs()
+            if not config_items:
                 yield await self._error_result(event, f"未在 {config_dir} 中发现插件配置文件。")
                 return
 
             lines = [f"配置目录：{config_dir}", "可管理插件："]
-            for path in config_files:
-                plugin_name = path.name[: -len("_config.json")]
-                lines.append(f"- {plugin_name}")
+            for index, (plugin_name, _path) in enumerate(config_items, start=1):
+                lines.append(f"{index}. {plugin_name}")
+            lines.append("")
+            lines.append("提示：后续命令可直接使用插件序号代替插件名。")
             yield await self._message_result(
                 event,
                 "\n".join(lines),
                 title="插件配置列表",
-                subtitle=f"共 {len(config_files)} 个配置文件",
+                subtitle=f"共 {len(config_items)} 个配置文件",
                 filename_prefix="list",
             )
         except Exception as exc:
@@ -98,12 +100,14 @@ class AstrBotPluginConfigManager(Star):
     async def view_config(self, event: AstrMessageEvent, plugin_name: str):
         """查看指定插件配置并渲染为图片。"""
         try:
-            config_path = self._get_plugin_config_path(plugin_name)
+            resolved_plugin_name = self._resolve_plugin_name(plugin_name)
+            config_path = self._get_plugin_config_path(resolved_plugin_name)
             config_data = await self._load_json(config_path)
             entries = self._flatten_config_entries(config_data)
             if not entries:
                 entries = [
                     ConfigEntry(
+                        serial_no="1",
                         key_name="<root>",
                         dot_path="<root>",
                         value_text=self._render_json(config_data),
@@ -111,7 +115,7 @@ class AstrBotPluginConfigManager(Star):
                     )
                 ]
             render_path = await self.renderer.render_config_table(
-                plugin_name=plugin_name,
+                plugin_name=resolved_plugin_name,
                 config_path=config_path,
                 entries=entries,
             )
@@ -129,14 +133,16 @@ class AstrBotPluginConfigManager(Star):
     ):
         """读取指定插件配置中的某个键。"""
         try:
-            config_path = self._get_plugin_config_path(plugin_name)
+            resolved_plugin_name = self._resolve_plugin_name(plugin_name)
+            config_path = self._get_plugin_config_path(resolved_plugin_name)
             config_data = await self._load_json(config_path)
-            value = self._get_by_path(config_data, self._parse_key_path(key_path))
+            resolved_key_path = self._resolve_key_path(config_data, key_path)
+            value = self._get_by_path(config_data, resolved_key_path)
             yield await self._message_result(
                 event,
                 self._render_json(value),
-                title=f"配置获取：{plugin_name}",
-                subtitle=f"Key: {key_path}",
+                title=f"配置获取：{resolved_plugin_name}",
+                subtitle=f"Key: {'.'.join(map(str, resolved_key_path))}",
                 filename_prefix="get",
             )
         except Exception as exc:
@@ -153,19 +159,21 @@ class AstrBotPluginConfigManager(Star):
     ):
         """写入指定插件配置中的某个键。"""
         try:
-            config_path = self._get_plugin_config_path(plugin_name, allow_missing=True)
+            resolved_plugin_name = self._resolve_plugin_name(plugin_name, allow_missing=True)
+            config_path = self._get_plugin_config_path(resolved_plugin_name, allow_missing=True)
             config_data = await self._load_json(config_path, allow_missing=True)
             parsed_value = self._parse_input_value(value)
             if config_path.exists():
-                await self._create_backup(plugin_name, config_path)
-            self._set_by_path(config_data, self._parse_key_path(key_path), parsed_value)
+                await self._create_backup(resolved_plugin_name, config_path)
+            resolved_key_path = self._resolve_key_path(config_data, key_path, allow_create=True)
+            self._set_by_path(config_data, resolved_key_path, parsed_value)
             await self._save_json(config_path, config_data)
-            logger.info(f"updated config for {plugin_name}: {key_path}")
+            logger.info(f"updated config for {resolved_plugin_name}: {resolved_key_path}")
             yield await self._message_result(
                 event,
-                f"已写入 {plugin_name}.{key_path}\n\n值：{self._stringify_value(parsed_value)}",
+                f"已写入 {resolved_plugin_name}.{'.'.join(map(str, resolved_key_path))}\n\n值：{self._stringify_value(parsed_value)}",
                 title="配置写入成功",
-                subtitle=f"Plugin: {plugin_name}",
+                subtitle=f"Plugin: {resolved_plugin_name}",
                 filename_prefix="set",
             )
         except Exception as exc:
@@ -181,17 +189,19 @@ class AstrBotPluginConfigManager(Star):
     ):
         """删除指定插件配置中的某个键。"""
         try:
-            config_path = self._get_plugin_config_path(plugin_name)
+            resolved_plugin_name = self._resolve_plugin_name(plugin_name)
+            config_path = self._get_plugin_config_path(resolved_plugin_name)
             config_data = await self._load_json(config_path)
-            await self._create_backup(plugin_name, config_path)
-            self._delete_by_path(config_data, self._parse_key_path(key_path))
+            await self._create_backup(resolved_plugin_name, config_path)
+            resolved_key_path = self._resolve_key_path(config_data, key_path)
+            self._delete_by_path(config_data, resolved_key_path)
             await self._save_json(config_path, config_data)
-            logger.info(f"deleted config value for {plugin_name}: {key_path}")
+            logger.info(f"deleted config value for {resolved_plugin_name}: {resolved_key_path}")
             yield await self._message_result(
                 event,
-                f"已删除 {plugin_name}.{key_path}",
+                f"已删除 {resolved_plugin_name}.{'.'.join(map(str, resolved_key_path))}",
                 title="配置删除成功",
-                subtitle=f"Plugin: {plugin_name}",
+                subtitle=f"Plugin: {resolved_plugin_name}",
                 filename_prefix="delete",
             )
         except Exception as exc:
@@ -202,13 +212,14 @@ class AstrBotPluginConfigManager(Star):
     async def backup_config(self, event: AstrMessageEvent, plugin_name: str):
         """为指定插件配置创建备份。"""
         try:
-            config_path = self._get_plugin_config_path(plugin_name)
-            backup_path = await self._create_backup(plugin_name, config_path)
+            resolved_plugin_name = self._resolve_plugin_name(plugin_name)
+            config_path = self._get_plugin_config_path(resolved_plugin_name)
+            backup_path = await self._create_backup(resolved_plugin_name, config_path)
             yield await self._message_result(
                 event,
                 f"已创建备份：{backup_path.name}",
                 title="配置备份成功",
-                subtitle=f"Plugin: {plugin_name}",
+                subtitle=f"Plugin: {resolved_plugin_name}",
                 filename_prefix="backup",
             )
         except Exception as exc:
@@ -222,24 +233,25 @@ class AstrBotPluginConfigManager(Star):
     async def list_backups(self, event: AstrMessageEvent, plugin_name: str):
         """列出指定插件的可用备份。"""
         try:
-            backup_dir = self._get_backup_dir(plugin_name)
+            resolved_plugin_name = self._resolve_plugin_name(plugin_name)
+            backup_dir = self._get_backup_dir(resolved_plugin_name)
             if not backup_dir.exists():
-                yield await self._error_result(event, f"{plugin_name} 暂无备份。")
+                yield await self._error_result(event, f"{resolved_plugin_name} 暂无备份。")
                 return
 
             backups = sorted(backup_dir.glob("*.json"), reverse=True)
             if not backups:
-                yield await self._error_result(event, f"{plugin_name} 暂无备份。")
+                yield await self._error_result(event, f"{resolved_plugin_name} 暂无备份。")
                 return
 
-            lines = [f"{plugin_name} 的备份列表："]
+            lines = [f"{resolved_plugin_name} 的备份列表："]
             for backup in backups:
                 lines.append(f"- {backup.name}")
             yield await self._message_result(
                 event,
                 "\n".join(lines),
                 title="备份列表",
-                subtitle=f"Plugin: {plugin_name}",
+                subtitle=f"Plugin: {resolved_plugin_name}",
                 filename_prefix="backup-list",
             )
         except Exception as exc:
@@ -255,21 +267,22 @@ class AstrBotPluginConfigManager(Star):
     ):
         """从备份恢复指定插件配置。"""
         try:
-            backup_path = self._get_backup_path(plugin_name, backup_name)
+            resolved_plugin_name = self._resolve_plugin_name(plugin_name, allow_missing=True)
+            backup_path = self._get_backup_path(resolved_plugin_name, backup_name)
             if not backup_path.exists():
                 raise FileNotFoundError(f"备份不存在：{backup_name}")
 
-            config_path = self._get_plugin_config_path(plugin_name, allow_missing=True)
+            config_path = self._get_plugin_config_path(resolved_plugin_name, allow_missing=True)
             if config_path.exists():
-                await self._create_backup(plugin_name, config_path)
+                await self._create_backup(resolved_plugin_name, config_path)
             restored_data = await self._load_json(backup_path)
             await self._save_json(config_path, restored_data)
-            logger.info(f"restored config for {plugin_name} from {backup_name}")
+            logger.info(f"restored config for {resolved_plugin_name} from {backup_name}")
             yield await self._message_result(
                 event,
-                f"已恢复 {plugin_name}\n来源备份：{backup_name}",
+                f"已恢复 {resolved_plugin_name}\n来源备份：{backup_name}",
                 title="配置恢复成功",
-                subtitle=f"Plugin: {plugin_name}",
+                subtitle=f"Plugin: {resolved_plugin_name}",
                 filename_prefix="restore",
             )
         except Exception as exc:
@@ -285,15 +298,16 @@ class AstrBotPluginConfigManager(Star):
     ):
         """保存插件配置为预设。"""
         try:
-            config_path = self._get_plugin_config_path(plugin_name)
+            resolved_plugin_name = self._resolve_plugin_name(plugin_name)
+            config_path = self._get_plugin_config_path(resolved_plugin_name)
             config_data = await self._load_json(config_path)
-            preset_path = self._get_preset_path(plugin_name, preset_name)
+            preset_path = self._get_preset_path(resolved_plugin_name, preset_name)
             await self._save_json(preset_path, config_data)
             yield await self._message_result(
                 event,
-                f"已保存预设：{preset_name}\n来源插件：{plugin_name}",
+                f"已保存预设：{preset_name}\n来源插件：{resolved_plugin_name}",
                 title="配置预设保存成功",
-                subtitle=f"Plugin: {plugin_name}",
+                subtitle=f"Plugin: {resolved_plugin_name}",
                 filename_prefix="preset-save",
             )
         except Exception as exc:
@@ -308,24 +322,25 @@ class AstrBotPluginConfigManager(Star):
     ):
         """列出插件配置预设。"""
         try:
-            preset_dir = self._get_preset_dir(plugin_name)
+            resolved_plugin_name = self._resolve_plugin_name(plugin_name)
+            preset_dir = self._get_preset_dir(resolved_plugin_name)
             if not preset_dir.exists():
-                yield await self._error_result(event, f"{plugin_name} 暂无配置预设。")
+                yield await self._error_result(event, f"{resolved_plugin_name} 暂无配置预设。")
                 return
 
             preset_files = sorted(preset_dir.glob("*.json"))
             if not preset_files:
-                yield await self._error_result(event, f"{plugin_name} 暂无配置预设。")
+                yield await self._error_result(event, f"{resolved_plugin_name} 暂无配置预设。")
                 return
 
-            lines = [f"{plugin_name} 的配置预设："]
+            lines = [f"{resolved_plugin_name} 的配置预设："]
             for preset_file in preset_files:
                 lines.append(f"- {preset_file.stem}")
             yield await self._message_result(
                 event,
                 "\n".join(lines),
                 title="配置预设列表",
-                subtitle=f"Plugin: {plugin_name}",
+                subtitle=f"Plugin: {resolved_plugin_name}",
                 filename_prefix="preset-list",
             )
         except Exception as exc:
@@ -341,22 +356,23 @@ class AstrBotPluginConfigManager(Star):
     ):
         """应用指定配置预设。"""
         try:
-            preset_path = self._get_preset_path(plugin_name, preset_name)
+            resolved_plugin_name = self._resolve_plugin_name(plugin_name, allow_missing=True)
+            preset_path = self._get_preset_path(resolved_plugin_name, preset_name)
             if not preset_path.exists():
                 raise FileNotFoundError(f"预设不存在：{preset_name}")
 
-            config_path = self._get_plugin_config_path(plugin_name, allow_missing=True)
+            config_path = self._get_plugin_config_path(resolved_plugin_name, allow_missing=True)
             if config_path.exists():
-                await self._create_backup(plugin_name, config_path)
+                await self._create_backup(resolved_plugin_name, config_path)
 
             preset_data = await self._load_json(preset_path)
             await self._save_json(config_path, preset_data)
-            logger.info(f"applied preset for {plugin_name}: {preset_name}")
+            logger.info(f"applied preset for {resolved_plugin_name}: {preset_name}")
             yield await self._message_result(
                 event,
-                f"已应用预设：{preset_name}\n目标插件：{plugin_name}",
+                f"已应用预设：{preset_name}\n目标插件：{resolved_plugin_name}",
                 title="配置预设应用成功",
-                subtitle=f"Plugin: {plugin_name}",
+                subtitle=f"Plugin: {resolved_plugin_name}",
                 filename_prefix="preset-apply",
             )
         except Exception as exc:
@@ -372,17 +388,18 @@ class AstrBotPluginConfigManager(Star):
     ):
         """删除指定配置预设。"""
         try:
-            preset_path = self._get_preset_path(plugin_name, preset_name)
+            resolved_plugin_name = self._resolve_plugin_name(plugin_name, allow_missing=True)
+            preset_path = self._get_preset_path(resolved_plugin_name, preset_name)
             if not preset_path.exists():
                 raise FileNotFoundError(f"预设不存在：{preset_name}")
 
             await asyncio.to_thread(preset_path.unlink)
-            logger.info(f"deleted preset for {plugin_name}: {preset_name}")
+            logger.info(f"deleted preset for {resolved_plugin_name}: {preset_name}")
             yield await self._message_result(
                 event,
-                f"已删除预设：{preset_name}\n目标插件：{plugin_name}",
+                f"已删除预设：{preset_name}\n目标插件：{resolved_plugin_name}",
                 title="配置预设删除成功",
-                subtitle=f"Plugin: {plugin_name}",
+                subtitle=f"Plugin: {resolved_plugin_name}",
                 filename_prefix="preset-delete",
             )
         except Exception as exc:
@@ -396,6 +413,31 @@ class AstrBotPluginConfigManager(Star):
         if override:
             return Path(override).expanduser().resolve()
         return self.data_dir.parent.parent / "config"
+
+    def _list_plugin_configs(self) -> list[tuple[str, Path]]:
+        config_dir = self._get_config_dir()
+        items: list[tuple[str, Path]] = []
+        for path in sorted(config_dir.glob("*_config.json")):
+            if not path.is_file():
+                continue
+            plugin_name = path.name[: -len("_config.json")]
+            items.append((plugin_name, path))
+        return items
+
+    def _resolve_plugin_name(self, plugin_name: str, allow_missing: bool = False) -> str:
+        candidate = plugin_name.strip()
+        if not candidate:
+            raise ConfigPathError("插件名或插件序号不能为空。")
+
+        if candidate.isdigit():
+            plugin_index = int(candidate)
+            config_items = self._list_plugin_configs()
+            if 1 <= plugin_index <= len(config_items):
+                return config_items[plugin_index - 1][0]
+
+            raise ConfigPathError(f"插件序号不存在：{plugin_index}")
+
+        return self._sanitize_plugin_name(candidate)
 
     def _get_backup_dir(self, plugin_name: str) -> Path:
         return self.data_dir / "backups" / self._sanitize_plugin_name(plugin_name)
@@ -450,18 +492,88 @@ class AstrBotPluginConfigManager(Star):
             raise ConfigPathError("预设名仅允许字母、数字、点、下划线和中划线。")
         return candidate
 
-    def _parse_key_path(self, key_path: str) -> list[str | int]:
+    def _parse_key_path(self, key_path: str) -> list[str]:
         raw_parts = [part.strip() for part in key_path.split(".")]
         if not raw_parts or any(part == "" for part in raw_parts):
             raise ConfigPathError("键路径不能为空，且不能包含空段。")
+        return raw_parts
 
-        parsed_parts: list[str | int] = []
-        for part in raw_parts:
-            if part.isdigit():
-                parsed_parts.append(int(part))
-            else:
-                parsed_parts.append(part)
-        return parsed_parts
+    def _resolve_key_path(
+        self,
+        data: dict[str, Any],
+        key_path: str,
+        allow_create: bool = False,
+    ) -> list[str | int]:
+        candidate = key_path.strip()
+        if not candidate:
+            raise ConfigPathError("键路径或配置项序号不能为空。")
+
+        if re.fullmatch(r"\d+(?:\.\d+)*", candidate):
+            serial_no = candidate
+            entry = self._find_config_entry_by_serial(data, serial_no)
+            if entry is not None:
+                if entry.dot_path == "<root>":
+                    raise ConfigPathError("根节点不支持通过序号直接操作。")
+                return self._resolve_dot_path(data, entry.dot_path, allow_create=False)
+            if not allow_create:
+                raise ConfigPathError(f"配置项序号不存在：{serial_no}")
+
+        return self._resolve_dot_path(data, candidate, allow_create=allow_create)
+
+    def _resolve_dot_path(
+        self,
+        data: Any,
+        key_path: str,
+        allow_create: bool,
+    ) -> list[str | int]:
+        raw_parts = self._parse_key_path(key_path)
+        resolved_parts: list[str | int] = []
+        current = data
+
+        for index, part in enumerate(raw_parts):
+            is_last = index == len(raw_parts) - 1
+            next_part = raw_parts[index + 1] if not is_last else None
+
+            if not isinstance(current, (dict, list)):
+                if not allow_create:
+                    raise ConfigPathError(f"路径段 {part} 的父节点不是对象或列表。")
+                current = [] if part.isdigit() else {}
+
+            if isinstance(current, list):
+                if not part.isdigit():
+                    raise ConfigPathError(f"路径段 {part} 不是列表索引。")
+                list_index = int(part)
+                resolved_parts.append(list_index)
+                if is_last:
+                    continue
+                if list_index >= len(current):
+                    if not allow_create:
+                        raise ConfigPathError(f"列表索引越界：{list_index}")
+                    current = [] if (next_part and next_part.isdigit()) else {}
+                    continue
+                current = current[list_index]
+                continue
+
+            resolved_parts.append(part)
+            if is_last:
+                continue
+            if part not in current:
+                if not allow_create:
+                    raise ConfigPathError(f"键不存在：{part}")
+                current = [] if (next_part and next_part.isdigit()) else {}
+                continue
+            current = current[part]
+
+        return resolved_parts
+
+    def _find_config_entry_by_serial(self, data: dict[str, Any], serial_no: str) -> ConfigEntry | None:
+        serial_parts = serial_no.split(".")
+        if any((not part.isdigit()) or int(part) <= 0 for part in serial_parts):
+            raise ConfigPathError("配置项序号必须为大于 0 的层级序号，例如 1、2.1、4.2。")
+        for entry in self._flatten_config_entries(data):
+            if entry.serial_no == serial_no:
+                return entry
+        return None
 
     def _parse_input_value(self, raw_value: str) -> Any:
         try:
@@ -549,56 +661,51 @@ class AstrBotPluginConfigManager(Star):
     def _flatten_config_entries(self, data: Any) -> list[ConfigEntry]:
         entries: list[ConfigEntry] = []
 
-        def visit(node: Any, path_parts: list[str]):
-            if isinstance(node, dict):
-                if path_parts:
-                    entries.append(
-                        ConfigEntry(
-                            key_name=path_parts[-1],
-                            dot_path=".".join(path_parts),
-                            value_text=self._summarize_node(node),
-                            depth=max(0, len(path_parts) - 1),
-                        )
-                    )
-                for key, value in node.items():
-                    visit(value, [*path_parts, str(key)])
-                return
-
-            if isinstance(node, list):
-                if path_parts:
-                    entries.append(
-                        ConfigEntry(
-                            key_name=path_parts[-1],
-                            dot_path=".".join(path_parts),
-                            value_text=self._summarize_node(node),
-                            depth=max(0, len(path_parts) - 1),
-                        )
-                    )
-                for index, value in enumerate(node):
-                    visit(value, [*path_parts, str(index)])
-                return
-
-            if not path_parts:
-                entries.append(
-                    ConfigEntry(
-                        key_name="<root>",
-                        dot_path="<root>",
-                        value_text=self._stringify_value(node),
-                        depth=0,
-                    )
-                )
-                return
-
+        def append_entry(path_parts: list[str], serial_parts: list[int], value_text: str):
+            dot_path = ".".join(path_parts) if path_parts else "<root>"
+            key_name = path_parts[-1] if path_parts else "<root>"
             entries.append(
                 ConfigEntry(
-                    key_name=path_parts[-1],
-                    dot_path=".".join(path_parts),
-                    value_text=self._stringify_value(node),
+                    serial_no=".".join(str(part) for part in serial_parts),
+                    key_name=key_name,
+                    dot_path=dot_path,
+                    value_text=value_text,
                     depth=max(0, len(path_parts) - 1),
                 )
             )
 
-        visit(data, [])
+        def visit(node: Any, path_parts: list[str], serial_parts: list[int]):
+            if isinstance(node, dict):
+                if path_parts:
+                    append_entry(path_parts, serial_parts, self._summarize_node(node))
+                for index, (key, value) in enumerate(node.items(), start=1):
+                    visit(value, [*path_parts, str(key)], [*serial_parts, index])
+                return
+
+            if isinstance(node, list):
+                if path_parts:
+                    append_entry(path_parts, serial_parts, self._summarize_node(node))
+                for index, value in enumerate(node):
+                    visit(value, [*path_parts, str(index)], [*serial_parts, index + 1])
+                return
+
+            if not path_parts:
+                append_entry([], [1], self._stringify_value(node))
+                return
+
+            append_entry(path_parts, serial_parts, self._stringify_value(node))
+
+        if isinstance(data, dict):
+            for index, (key, value) in enumerate(data.items(), start=1):
+                visit(value, [str(key)], [index])
+            return entries
+
+        if isinstance(data, list):
+            for index, value in enumerate(data, start=1):
+                visit(value, [str(index - 1)], [index])
+            return entries
+
+        visit(data, [], [])
         return entries
 
     def _stringify_value(self, value: Any) -> str:

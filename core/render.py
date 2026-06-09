@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 @dataclass
 class ConfigEntry:
+    serial_no: str
     key_name: str
     dot_path: str
     value_text: str
@@ -155,14 +156,16 @@ class RenderHelper:
         visible_entries = entries[:max_rows]
         max_depth = max((entry.depth for entry in visible_entries), default=0)
 
-        canvas_width = max(960, self._get_int_config("image_width", 1600))
+        canvas_width = max(1080, self._get_int_config("image_width", 1600))
         margin = 40
-        header_height = 156
+        header_height = 176
         row_padding_y = 14
         cell_padding_x = 12
         row_gap = 1
-        col_key = 560
-        col_value = canvas_width - margin * 2 - col_key
+        table_width = canvas_width - margin * 2
+        col_serial = 92
+        col_key = max(420, int((table_width - col_serial) * 0.46))
+        col_value = table_width - col_serial - col_key
         if col_value < 280:
             raise ValueError("图片宽度过小，无法渲染配置表。")
 
@@ -174,9 +177,12 @@ class RenderHelper:
         draw = ImageDraw.Draw(Image.new("RGB", (canvas_width, 10), "#FFFFFF"))
 
         rows: list[dict[str, Any]] = []
+        line_height = self._line_height(draw, body_font)
         for entry in visible_entries:
-            indent_width = min(entry.depth, 6) * 22
-            key_text_width = col_key - cell_padding_x * 2 - 50 - indent_width
+            level_label = f"L{entry.depth + 1}"
+            level_badge_width = max(36, self._measure_text_width(draw, level_label, badge_font) + 18)
+            indent_width = min(entry.depth, 6) * 14
+            key_text_width = col_key - cell_padding_x * 2 - indent_width - level_badge_width - 18
             key_lines = self._wrap_text(
                 draw,
                 entry.dot_path,
@@ -190,20 +196,22 @@ class RenderHelper:
                 col_value - cell_padding_x * 2,
             )
             line_count = max(len(key_lines), len(value_lines))
-            line_height = self._line_height(draw, body_font)
             row_height = row_padding_y * 2 + line_count * line_height
             rows.append(
                 {
+                    "serial_text": str(entry.serial_no),
                     "key_lines": key_lines,
                     "value_lines": value_lines,
                     "height": row_height,
                     "depth": entry.depth,
                     "indent_width": indent_width,
+                    "level_label": level_label,
+                    "level_badge_width": level_badge_width,
                 }
             )
 
         table_header_height = 48
-        footer_height = 48
+        footer_height = 54
         image_height = header_height + table_header_height + footer_height
         image_height += sum(row["height"] + row_gap for row in rows)
 
@@ -216,11 +224,11 @@ class RenderHelper:
             outline="#D8D1C0",
             width=2,
         )
-        draw.text((margin, 34), f"Plugin Config: {plugin_name}", fill="#1F2937", font=title_font)
-        draw.text((margin, 68), "Flattened view for config keys", fill="#64748B", font=meta_font)
+        draw.text((margin, 34), f"插件配置：{plugin_name}", fill="#1F2937", font=title_font)
+        draw.text((margin, 68), "查看图中的序号可直接用于 获取 / 设置 / 删除", fill="#64748B", font=meta_font)
 
-        meta_box_top = 94
-        meta_box_bottom = 134
+        meta_box_top = 100
+        meta_box_bottom = 154
         draw.rounded_rectangle(
             (margin, meta_box_top, canvas_width - margin, meta_box_bottom),
             radius=14,
@@ -235,8 +243,8 @@ class RenderHelper:
             font=meta_font,
         )
         draw.text(
-            (canvas_width - margin - 320, meta_box_top + 10),
-            f"条目数: {len(visible_entries)}/{len(entries)}  层级深度: {max_depth + 1}",
+            (margin + 18, meta_box_top + 30),
+            f"条目数: {len(visible_entries)}/{len(entries)}  最大层级: {max_depth + 1}",
             fill="#475569",
             font=meta_font,
         )
@@ -252,14 +260,15 @@ class RenderHelper:
             width=1,
         )
 
-        key_x = table_left
+        serial_x = table_left
+        key_x = serial_x + col_serial
         value_x = key_x + col_key
         header_y = table_top + 12
-        draw.text((key_x + cell_padding_x, header_y), "Key", fill="#102A43", font=header_font)
-        draw.text((value_x + cell_padding_x, header_y), "Value", fill="#102A43", font=header_font)
+        draw.text((serial_x + cell_padding_x, header_y), "序号", fill="#102A43", font=header_font)
+        draw.text((key_x + cell_padding_x, header_y), "键路径", fill="#102A43", font=header_font)
+        draw.text((value_x + cell_padding_x, header_y), "值", fill="#102A43", font=header_font)
 
         current_y = table_top + table_header_height + row_gap
-        line_height = self._line_height(draw, body_font)
         for index, row in enumerate(rows):
             fill = "#FFFFFF" if index % 2 == 0 else "#F7F9FC"
             draw.rectangle(
@@ -268,34 +277,65 @@ class RenderHelper:
                 outline="#E2E8F0",
                 width=1,
             )
+            draw.line((key_x, current_y, key_x, current_y + row["height"]), fill="#E2E8F0", width=1)
             draw.line((value_x, current_y, value_x, current_y + row["height"]), fill="#E2E8F0", width=1)
 
             accent_color = self._depth_color(row["depth"])
+            serial_badge_width = max(42, self._measure_text_width(draw, row["serial_text"], body_font) + 20)
+            serial_badge_left = serial_x + (col_serial - serial_badge_width) / 2
+            serial_badge_top = current_y + row_padding_y
+            serial_badge_right = serial_badge_left + serial_badge_width
+            serial_badge_bottom = serial_badge_top + 24
             draw.rounded_rectangle(
-                (key_x + 8, current_y + 8, key_x + 14, current_y + row["height"] - 8),
+                (serial_badge_left, serial_badge_top, serial_badge_right, serial_badge_bottom),
+                radius=10,
+                fill="#EEF4FF",
+                outline="#D3E0FF",
+                width=1,
+            )
+            serial_text_width = self._measure_text_width(draw, row["serial_text"], body_font)
+            draw.text(
+                (serial_badge_left + (serial_badge_width - serial_text_width) / 2, serial_badge_top + 2),
+                row["serial_text"],
+                fill="#1D4ED8",
+                font=body_font,
+            )
+
+            draw.rounded_rectangle(
+                (key_x + 6, current_y + 8, key_x + 12, current_y + row["height"] - 8),
                 radius=3,
                 fill=accent_color,
             )
 
-            badge_left = key_x + cell_padding_x + 14
+            guide_base_x = key_x + cell_padding_x + 6
+            for guide_index in range(min(row["depth"], 6)):
+                guide_left = guide_base_x + guide_index * 10
+                draw.rounded_rectangle(
+                    (guide_left, current_y + 10, guide_left + 4, current_y + row["height"] - 10),
+                    radius=2,
+                    fill="#D6E4F5",
+                )
+
+            badge_left = key_x + cell_padding_x + 16 + row["indent_width"]
             badge_top = current_y + row_padding_y
-            badge_right = badge_left + 34
+            badge_right = badge_left + row["level_badge_width"]
             badge_bottom = badge_top + 22
             draw.rounded_rectangle(
                 (badge_left, badge_top, badge_right, badge_bottom),
                 radius=8,
                 fill=accent_color,
             )
+            badge_text_width = self._measure_text_width(draw, row["level_label"], badge_font)
             draw.text(
-                (badge_left + 8, badge_top + 2),
-                f"L{row['depth'] + 1}",
+                (badge_left + (row["level_badge_width"] - badge_text_width) / 2, badge_top + 2),
+                row["level_label"],
                 fill="#FFFFFF",
                 font=badge_font,
             )
             self._draw_multiline_cell(
                 draw,
                 row["key_lines"],
-                key_x + cell_padding_x + 56 + row["indent_width"],
+                badge_right + 10,
                 current_y + row_padding_y,
                 body_font,
                 line_height,
@@ -311,6 +351,11 @@ class RenderHelper:
                 "#111827",
             )
             current_y += row["height"] + row_gap
+
+        footer_text = "提示：序号可直接作为键路径参数使用。"
+        if was_truncated:
+            footer_text = f"仅展示前 {len(visible_entries)} 项，可调整 image_max_rows 以查看更多配置项。"
+        draw.text((margin, image_height - 50), footer_text, fill="#64748B", font=meta_font)
 
         output_path = render_dir / self._build_filename(plugin_name, "png")
         image.save(output_path, format="PNG")
