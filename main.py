@@ -414,11 +414,29 @@ class AstrBotPluginConfigManager(Star):
 
         def visit(node: Any, path_parts: list[str]):
             if isinstance(node, dict):
+                if path_parts:
+                    entries.append(
+                        ConfigEntry(
+                            key_name=path_parts[-1],
+                            dot_path=".".join(path_parts),
+                            value_text=self._summarize_node(node),
+                            depth=max(0, len(path_parts) - 1),
+                        )
+                    )
                 for key, value in node.items():
                     visit(value, [*path_parts, str(key)])
                 return
 
             if isinstance(node, list):
+                if path_parts:
+                    entries.append(
+                        ConfigEntry(
+                            key_name=path_parts[-1],
+                            dot_path=".".join(path_parts),
+                            value_text=self._summarize_node(node),
+                            depth=max(0, len(path_parts) - 1),
+                        )
+                    )
                 for index, value in enumerate(node):
                     visit(value, [*path_parts, str(index)])
                 return
@@ -450,6 +468,13 @@ class AstrBotPluginConfigManager(Star):
         if isinstance(value, str):
             return value
         return json.dumps(value, ensure_ascii=False)
+
+    def _summarize_node(self, value: Any) -> str:
+        if isinstance(value, dict):
+            return f"对象 ({len(value)} 项)"
+        if isinstance(value, list):
+            return f"列表 ({len(value)} 项)"
+        return self._stringify_value(value)
 
     def _get_raw_config_value(self, key: str, default: Any) -> Any:
         if self.config is None:
