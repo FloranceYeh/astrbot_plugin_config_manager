@@ -467,9 +467,8 @@ class AstrBotPluginConfigManager(Star):
         row_padding_y = 14
         cell_padding_x = 12
         row_gap = 1
-        col_key = 260
-        col_path = 420
-        col_value = canvas_width - margin * 2 - col_key - col_path
+        col_key = 560
+        col_value = canvas_width - margin * 2 - col_key
         if col_value < 280:
             raise ConfigPathError("图片宽度过小，无法渲染配置表。")
 
@@ -487,19 +486,17 @@ class AstrBotPluginConfigManager(Star):
             key_text_width = col_key - cell_padding_x * 2 - badge_width - indent_width
             key_lines = self._wrap_text(
                 draw,
-                entry.key_name,
+                entry.dot_path,
                 body_font,
                 max(80, key_text_width),
             )
-            path_lines = self._wrap_text(draw, entry.dot_path, body_font, col_path - cell_padding_x * 2)
             value_lines = self._wrap_text(draw, entry.value_text, body_font, col_value - cell_padding_x * 2)
-            line_count = max(len(key_lines), len(path_lines), len(value_lines))
+            line_count = max(len(key_lines), len(value_lines))
             line_height = self._line_height(draw, body_font)
             row_height = row_padding_y * 2 + line_count * line_height
             rows.append(
                 {
                     "key_lines": key_lines,
-                    "path_lines": path_lines,
                     "value_lines": value_lines,
                     "height": row_height,
                     "depth": entry.depth,
@@ -560,11 +557,9 @@ class AstrBotPluginConfigManager(Star):
         )
 
         key_x = table_left
-        path_x = key_x + col_key
-        value_x = path_x + col_path
+        value_x = key_x + col_key
         header_y = table_top + 12
         draw.text((key_x + cell_padding_x, header_y), "Key", fill="#102A43", font=header_font)
-        draw.text((path_x + cell_padding_x, header_y), "Dot Path", fill="#102A43", font=header_font)
         draw.text((value_x + cell_padding_x, header_y), "Value", fill="#102A43", font=header_font)
 
         current_y = table_top + table_header_height + row_gap
@@ -577,7 +572,6 @@ class AstrBotPluginConfigManager(Star):
                 outline="#E2E8F0",
                 width=1,
             )
-            draw.line((path_x, current_y, path_x, current_y + row["height"]), fill="#E2E8F0", width=1)
             draw.line((value_x, current_y, value_x, current_y + row["height"]), fill="#E2E8F0", width=1)
 
             accent_color = self._depth_color(row["depth"])
@@ -616,15 +610,6 @@ class AstrBotPluginConfigManager(Star):
                 body_font,
                 line_height,
                 "#1F2937",
-            )
-            self._draw_multiline_cell(
-                draw,
-                row["path_lines"],
-                path_x + cell_padding_x,
-                current_y + row_padding_y,
-                body_font,
-                line_height,
-                "#475569",
             )
             self._draw_multiline_cell(
                 draw,
